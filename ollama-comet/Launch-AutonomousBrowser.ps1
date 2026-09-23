@@ -1,8 +1,11 @@
 [CmdletBinding()]
 param(
     [Parameter()]
-    [ValidateSet('chrome', 'edge', 'comet')]
+    [ValidateSet('chrome', 'chromium', 'edge', 'comet')]
     [string]$Browser = 'comet',
+
+    [Parameter()]
+    [string]$BrowserPath,
 
     [Parameter()]
     [string]$Model,
@@ -15,6 +18,9 @@ param(
 
     [Parameter()]
     [switch]$Validate,
+
+    [Parameter()]
+    [switch]$BridgeOnly,
 
     [Parameter(ValueFromRemainingArguments)]
     [string[]]$ExtraArguments
@@ -30,6 +36,7 @@ $tokenPath = Join-Path $appRoot 'bridge.token'
 $targetPath = Join-Path $appRoot 'bridge.target'
 $logPath = Join-Path $appRoot 'bridge.log'
 $errorLogPath = Join-Path $appRoot 'bridge-error.log'
+$browserPathsPath = Join-Path $env:LOCALAPPDATA 'AutonomousBrowserAutomation\browser-paths.json'
 $profilePath = Join-Path $appRoot "$Browser Profile"
 $bridgeScript = Join-Path $PSScriptRoot 'bridge.py'
 $installedExtensionPath = Join-Path $PSScriptRoot 'browser-extension'
@@ -45,8 +52,56 @@ $cometPath = 'C:\Program Files\Perplexity\Comet\Application\comet.exe'
 $port = 11435
 $debugPort = 9223
 
+$normalizedExtraArguments = [System.Collections.Generic.List[string]]::new()
+for ($index = 0; $index -lt $ExtraArguments.Count; $index++) {
+    $argument = $ExtraArguments[$index]
+    switch ($argument.ToLowerInvariant()) {
+        '--bridge-only' {
+            $BridgeOnly = $true
+        }
+        '--validate' {
+            $Validate = $true
+        }
+        '--config' {
+            $Config = $true
+        }
+        '--restore' {
+            $Restore = $true
+        }
+        '--model' {
+            if ($index + 1 -ge $ExtraArguments.Count) {
+                throw '--model requires a model name.'
+            }
+            $index++
+            $Model = $ExtraArguments[$index]
+        }
+        '--browser-path' {
+            if ($index + 1 -ge $ExtraArguments.Count) {
+                throw '--browser-path requires an executable path.'
+            }
+            $index++
+            $BrowserPath = $ExtraArguments[$index]
+        }
+        default {
+            $normalizedExtraArguments.Add($argument)
+        }
+    }
+}
+$ExtraArguments = $normalizedExtraArguments.ToArray()
+
 function Resolve-BrowserPath {
     param([Parameter(Mandatory)] [string]$Name)
+
+    if (Test-Path -LiteralPath $browserPathsPath) {
+        $configuredPaths = Get-Content -Raw -LiteralPath $browserPathsPath | ConvertFrom-Json
+        $configuredPath = $configuredPaths.$Name
+        if ($configuredPath) {
+            if (Test-Path -LiteralPath $configuredPath -PathType Leaf) {
+                return (Get-Item -LiteralPath $configuredPath).FullName
+            }
+            throw "The configured $Name executable no longer exists: $configuredPath. Re-run the installer with -Browser and -BrowserPath."
+        }
+    }
 
     $candidates = switch ($Name) {
         'chrome' {
@@ -54,6 +109,13 @@ function Resolve-BrowserPath {
                 (Join-Path $env:ProgramFiles 'Google\Chrome\Application\chrome.exe'),
                 (Join-Path ${env:ProgramFiles(x86)} 'Google\Chrome\Application\chrome.exe'),
                 (Join-Path $env:LOCALAPPDATA 'Google\Chrome\Application\chrome.exe')
+            )
+        }
+        'chromium' {
+            @(
+                (Join-Path $env:ProgramFiles 'Chromium\Application\chrome.exe'),
+                (Join-Path ${env:ProgramFiles(x86)} 'Chromium\Application\chrome.exe'),
+                (Join-Path $env:LOCALAPPDATA 'Chromium\Application\chrome.exe')
             )
         }
         'edge' {
@@ -215,14 +277,25 @@ if (-not (Test-Path $pythonPath)) {
 if (-not (Test-Path $bridgeScript)) {
     throw "Bridge script was not found at $bridgeScript."
 }
-$browserPath = Resolve-BrowserPath $Browser
+$resolvedBrowserPath = if ($BrowserPath) {
+    if (-not (Test-Path $BrowserPath)) {
+        throw "The browser executable was not found at $BrowserPath"
+    }
+    (Resolve-Path $BrowserPath).Path
+}
+elseif (-not $BridgeOnly) {
+    Resolve-BrowserPath $Browser
+}
+else {
+    $null
+}
 if ($Browser -ne 'comet' -and -not (Test-Path (Join-Path $extensionPath 'manifest.json'))) {
     throw "The browser extension was not found at $extensionPath. Re-run Install-OllamaComet.ps1."
 }
 $firstBrowserLaunch = $Browser -ne 'comet' -and -not (Test-Path $profilePath)
 if ($Validate) {
     Write-Host "Browser: $Browser"
-    Write-Host "Executable: $browserPath"
+    Write-Host "Executable: $(if ($resolvedBrowserPath) { $resolvedBrowserPath } else { 'not required (bridge only)' })"
     if ($Browser -ne 'comet') {
         Write-Host "Extension: $extensionPath"
     }
@@ -350,6 +423,7 @@ else {
     } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $extensionPath 'runtime-config.json') -Encoding UTF8
     @(
         "`"--user-data-dir=$profilePath`"",
+        $(if ($Browser -eq 'chromium') { "`"--load-extension=$extensionPath`"" }),
         '--no-first-run',
         '--new-window',
         $(if ($firstBrowserLaunch) {
@@ -362,7 +436,14 @@ if ($ExtraArguments) {
     $browserArguments += $ExtraArguments
 }
 
-Start-Process -FilePath $browserPath -ArgumentList $browserArguments | Out-Null
+if ($BridgeOnly) {
+    Write-Host "Bridge started for $Browser at http://127.0.0.1:$port." -ForegroundColor Green
+    Write-Host "Bridge token file: $tokenPath"
+    Write-Host 'Open the extension settings in your existing browser and enter the bridge URL and token.'
+    return
+}
+
+Start-Process -FilePath $resolvedBrowserPath -ArgumentList $browserArguments | Out-Null
 Write-Host "$Browser launched with Ollama model '$($configuration.model)'." -ForegroundColor Green
 Write-Host "Backend: $($configuration.endpoint)"
 if ($Browser -eq 'comet') {

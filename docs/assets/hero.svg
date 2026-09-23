@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-labelledby="title description">
+  <title id="title">Autonomous Browser Automation</title>
+  <desc id="description">Ollama-powered browser agents for Chrome, Edge, Firefox, and Comet.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#102a2d"/>
+      <stop offset=".48" stop-color="#17474a"/>
+      <stop offset="1" stop-color="#2c7772"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#92e2d7"/>
+      <stop offset="1" stop-color="#d8fff8"/>
+    </linearGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="12" stdDeviation="18" flood-color="#071719" flood-opacity=".42"/>
+    </filter>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M32 0H0V32" fill="none" stroke="#b7eee6" stroke-opacity=".065"/>
+    </pattern>
+  </defs>
+  <rect width="1200" height="360" rx="26" fill="url(#background)"/>
+  <rect width="1200" height="360" rx="26" fill="url(#grid)"/>
+  <circle cx="1080" cy="36" r="180" fill="#7cd9ce" opacity=".08"/>
+  <circle cx="1150" cy="330" r="250" fill="#d0fff8" opacity=".05"/>
+
+  <g transform="translate(70 58)" filter="url(#shadow)">
+    <rect width="112" height="112" rx="30" fill="#e4fffb"/>
+    <path d="M28 72c13-34 31-49 56-46-6 8-9 15-8 22 9-3 17-2 24 3-7 6-14 11-22 14 3 9 1 18-6 27-9-10-18-15-28-16-5 7-10 12-16 15 1-7 1-13 0-19Z" fill="#19615f"/>
+    <circle cx="67" cy="48" r="5" fill="#e4fffb"/>
+    <path d="M39 83c10 6 21 8 34 5" fill="none" stroke="#92e2d7" stroke-width="5" stroke-linecap="round"/>
+  </g>
+
+  <text x="216" y="102" fill="#f4fffd" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="600" letter-spacing="4">OLLAMA-POWERED WEB AGENTS</text>
+  <text x="216" y="158" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="46" font-weight="750">Autonomous Browser Automation</text>
+  <text x="216" y="198" fill="#c7ebe6" font-family="Segoe UI, Arial, sans-serif" font-size="21">Visible browser control · Local-first privacy · Cloud-ready intelligence</text>
+
+  <g transform="translate(216 228)" font-family="Segoe UI, Arial, sans-serif" font-size="15" font-weight="650">
+    <g><rect width="105" height="38" rx="19" fill="#e2faf6"/><text x="52.5" y="25" fill="#174a49" text-anchor="middle">Chrome</text></g>
+    <g transform="translate(117)"><rect width="92" height="38" rx="19" fill="#d4f5ef"/><text x="46" y="25" fill="#174a49" text-anchor="middle">Edge</text></g>
+    <g transform="translate(221)"><rect width="105" height="38" rx="19" fill="#c6eee7"/><text x="52.5" y="25" fill="#174a49" text-anchor="middle">Firefox</text></g>
+    <g transform="translate(338)"><rect width="105" height="38" rx="19" fill="#b8e7df"/><text x="52.5" y="25" fill="#174a49" text-anchor="middle">Comet</text></g>
+  </g>
+
+  <g transform="translate(720 72)" font-family="Segoe UI, Arial, sans-serif" filter="url(#shadow)">
+    <rect width="405" height="220" rx="22" fill="#0e292c" stroke="#75cfc5" stroke-opacity=".5"/>
+    <rect x="22" y="21" width="361" height="38" rx="12" fill="#193d40"/>
+    <circle cx="42" cy="40" r="5" fill="#ff958d"/>
+    <circle cx="59" cy="40" r="5" fill="#ffd37c"/>
+    <circle cx="76" cy="40" r="5" fill="#83dfb1"/>
+    <rect x="101" y="32" width="250" height="16" rx="8" fill="#2d5b5d"/>
+    <g transform="translate(25 81)">
+      <rect width="222" height="112" rx="14" fill="#f0fbf9"/>
+      <rect x="18" y="18" width="108" height="11" rx="5" fill="#56a49e"/>
+      <rect x="18" y="41" width="177" height="8" rx="4" fill="#bddbd7"/>
+      <rect x="18" y="59" width="150" height="8" rx="4" fill="#cce4e0"/>
+      <rect x="18" y="82" width="71" height="19" rx="9" fill="#6cbab3"/>
+      <circle cx="184" cy="83" r="17" fill="#d5efeb"/>
+      <path d="m178 83 5 5 9-11" fill="none" stroke="#367b76" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+    <g transform="translate(260 81)">
+      <rect width="120" height="112" rx="14" fill="#d6f1ed"/>
+      <text x="16" y="25" fill="#295b59" font-size="10" font-weight="700">AGENT TRACE</text>
+      <g fill="#4b8f8a" font-size="10">
+        <text x="16" y="47">01 Navigate</text>
+        <text x="16" y="65">02 ReadPage</text>
+        <text x="16" y="83">03 FormInput</text>
+        <text x="16" y="101">04 Complete ✓</text>
+      </g>
+    </g>
+  </g>
+
+  <g transform="translate(70 315)" font-family="Segoe UI, Arial, sans-serif" font-size="13">
+    <circle cx="5" cy="-5" r="5" fill="#8be0d5"/>
+    <text x="18" fill="#bfe8e3">Manifest V3 WebExtension</text>
+    <circle cx="217" cy="-5" r="5" fill="#8be0d5"/>
+    <text x="230" fill="#bfe8e3">Authenticated loopback bridge</text>
+    <circle cx="468" cy="-5" r="5" fill="#8be0d5"/>
+    <text x="481" fill="#bfe8e3">Tool-driven autonomy</text>
+  </g>
+</svg>

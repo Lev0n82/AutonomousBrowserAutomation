@@ -1359,7 +1359,13 @@ def sensitive_allowed(messages):
 
 def should_use_browser_extension(server):
     return (
-        server.browser_target in {"chrome", "edge", "firefox", "extension"}
+        server.browser_target in {
+            "chrome",
+            "chromium",
+            "edge",
+            "firefox",
+            "extension",
+        }
         and server.browser_broker.connected()
     )
 
@@ -2475,7 +2481,7 @@ def main():
     parser.add_argument("--token", required=True)
     parser.add_argument(
         "--browser-target",
-        choices=("chrome", "edge", "firefox", "extension", "comet"),
+        choices=("chrome", "chromium", "edge", "firefox", "extension", "comet"),
         default="comet",
     )
     args = parser.parse_args()

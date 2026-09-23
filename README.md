@@ -1,17 +1,113 @@
-# Autonomous Browser Automation
+<div align="center">
+  <img src="docs/assets/hero.svg" width="100%" alt="Autonomous Browser Automation — Ollama-powered web agents for Chrome, Edge, Firefox, and Comet">
+</div>
 
-Use local or Ollama Cloud models as an autonomous assistant inside Chrome,
-Microsoft Edge, Firefox, or Perplexity Comet.
+<h1 align="center">Autonomous Browser Automation</h1>
 
-[Download Chromium extension ZIP](https://github.com/Lev0n82/AutonomousBrowserAutomation/releases/download/v0.2.1/AutonomousBrowserAutomation-Chromium-v0.2.1.zip)
-·
-[Download Firefox extension ZIP](https://github.com/Lev0n82/AutonomousBrowserAutomation/releases/download/v0.2.1/AutonomousBrowserAutomation-Firefox-v0.2.1.zip)
-·
-[View all releases](https://github.com/Lev0n82/AutonomousBrowserAutomation/releases)
+<p align="center">
+  <strong>Give local or Ollama Cloud models a visible, safety-gated browser they can actually operate.</strong>
+  <br>
+  Persistent side-panel chat · Semantic page understanding · Multi-step tool execution · Image and document inputs
+</p>
 
-> **Project status:** early public preview. The Comet integration is the most
-> extensively exercised path. Chrome, Edge, and Firefox now share an independent
-> WebExtension action engine and should be treated as development builds.
+<p align="center">
+  <a href="https://github.com/Lev0n82/AutonomousBrowserAutomation/releases">
+    <img alt="Latest release" src="https://img.shields.io/github/v/release/Lev0n82/AutonomousBrowserAutomation?include_prereleases&sort=semver&style=for-the-badge&color=2f8b83">
+  </a>
+  <a href="LICENSE">
+    <img alt="MIT license" src="https://img.shields.io/github/license/Lev0n82/AutonomousBrowserAutomation?style=for-the-badge&color=466b68">
+  </a>
+  <a href="https://github.com/Lev0n82/AutonomousBrowserAutomation/stargazers">
+    <img alt="GitHub stars" src="https://img.shields.io/github/stars/Lev0n82/AutonomousBrowserAutomation?style=for-the-badge&color=d39b39">
+  </a>
+  <a href="https://github.com/Lev0n82/AutonomousBrowserAutomation/releases">
+    <img alt="Release downloads" src="https://img.shields.io/github/downloads/Lev0n82/AutonomousBrowserAutomation/total?style=for-the-badge&color=397b87">
+  </a>
+</p>
+
+<p align="center">
+  <img alt="Primary language" src="https://img.shields.io/github/languages/top/Lev0n82/AutonomousBrowserAutomation?style=flat-square&color=3776ab">
+  <img alt="Language count" src="https://img.shields.io/github/languages/count/Lev0n82/AutonomousBrowserAutomation?style=flat-square&color=5b7774">
+  <img alt="Repository size" src="https://img.shields.io/github/repo-size/Lev0n82/AutonomousBrowserAutomation?style=flat-square&color=5b7774">
+  <img alt="Last commit" src="https://img.shields.io/github/last-commit/Lev0n82/AutonomousBrowserAutomation/OllamaComet?style=flat-square&color=2f8b83">
+  <img alt="Open issues" src="https://img.shields.io/github/issues/Lev0n82/AutonomousBrowserAutomation?style=flat-square&color=8b6f47">
+  <img alt="Manifest V3" src="https://img.shields.io/badge/WebExtension-Manifest_V3-255f5b?style=flat-square">
+  <img alt="Windows" src="https://img.shields.io/badge/platform-Windows_10%2F11-2672ec?style=flat-square&logo=windows11&logoColor=white">
+</p>
+
+<p align="center">
+  <img alt="Chrome supported" src="https://img.shields.io/badge/Chrome-supported-2f8b83?style=for-the-badge&logo=googlechrome&logoColor=white">
+  <img alt="Edge supported" src="https://img.shields.io/badge/Edge-supported-2f8b83?style=for-the-badge&logo=microsoftedge&logoColor=white">
+  <img alt="Firefox supported" src="https://img.shields.io/badge/Firefox-preview-d98032?style=for-the-badge&logo=firefoxbrowser&logoColor=white">
+  <img alt="Comet supported" src="https://img.shields.io/badge/Comet-native_agent-654ea3?style=for-the-badge">
+</p>
+
+<p align="center">
+  <a href="https://github.com/Lev0n82/AutonomousBrowserAutomation/releases/download/v0.2.1/AutonomousBrowserAutomation-Chromium-v0.2.1.zip"><strong>Download Chrome / Edge</strong></a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/Lev0n82/AutonomousBrowserAutomation/releases/download/v0.2.1/AutonomousBrowserAutomation-Firefox-v0.2.1.zip"><strong>Download Firefox</strong></a>
+  &nbsp;·&nbsp;
+  <a href="#quick-start-on-windows"><strong>Quick start</strong></a>
+  &nbsp;·&nbsp;
+  <a href="#security-and-privacy"><strong>Security</strong></a>
+</p>
+
+---
+
+<table>
+  <tr>
+    <td align="center"><strong>4</strong><br><sub>browser experiences</sub></td>
+    <td align="center"><strong>6</strong><br><sub>model tool families</sub></td>
+    <td align="center"><strong>11</strong><br><sub>interaction primitives</sub></td>
+    <td align="center"><strong>2</strong><br><sub>Ollama runtimes</sub></td>
+    <td align="center"><strong>∞</strong><br><sub>steps until cancel</sub></td>
+  </tr>
+</table>
+
+### See the agent workflow
+
+<div align="center">
+  <img src="docs/assets/browser-automation-demo.gif" width="100%" alt="Illustrative animation of an Ollama agent navigating a browser dashboard, reading page elements, applying a filter, capturing the state, and returning a structured summary">
+  <br>
+  <sub><em>Illustrative project animation: plan → navigate → read → interact → capture → summarize.</em></sub>
+</div>
+
+### What it can operate
+
+`Navigate` · `ReadPage` · `GetPageText` · `TabsCreate` · `FormInput` ·
+`Click` · `Right-click` · `Double-click` · `Type` · `Press keys` · `Scroll` ·
+`Drag` · `Screenshot` · `Wait`
+
+| Execution mode | Where inference runs | Browser-control path | Best fit |
+|---|---|---|---|
+| **Local Ollama** | Your machine at `127.0.0.1:11434` | WebExtension or native Comet agent | Private workflows, offline use, controlled data |
+| **Ollama Cloud** | Ollama Cloud API | Same browser tools and safety gates | Faster/larger models and complex multi-step planning |
+
+### Recommended model starting points
+
+These are practical starting points observed during development, not universal
+benchmarks. Model availability and capabilities can change.
+
+| Mode | Model | Recommended for | Guidance |
+|---|---|---|---|
+| Local · lightweight | `granite4.1:3b` | Basic tool execution on modest hardware | Tool capable; smaller models may need simpler, more explicit tasks |
+| Local · balanced | `qwen3.5` | Stronger planning and multi-step browser work | Choose a size appropriate for available RAM/VRAM |
+| Cloud · fast | `glm-5.3-flash:cloud` | Responsive interactive browsing | Verified through Ollama Cloud during development |
+| Cloud · tested | `glm-5.1` | Long-form research and document-assisted tasks | Used for the current attachment and agent round-trip validation |
+| Vision workflows | Any model exposing **tools + vision** | Screenshots and pasted images | Confirm both capabilities before relying on visual inputs |
+
+> [!IMPORTANT]
+> **What is the bridge token?** It is a random local-session secret used only to
+> authorize the extension and assistant against `127.0.0.1:11435`. The launcher
+> generates it automatically at `%LOCALAPPDATA%\OllamaComet\bridge.token`.
+> Installed Chrome/Edge launchers inject it automatically; manual ZIP users copy
+> it into extension settings. It is **not** an Ollama Cloud API key. Never share
+> or commit it.
+
+> [!NOTE]
+> **Public preview:** Comet is the most extensively exercised path. Chrome and
+> Edge use the shared independent WebExtension; Firefox currently uses semantic
+> DOM-event fallbacks for Chromium-only debugger actions.
 
 ## What this project does
 
@@ -35,6 +131,7 @@ the assistant panel, and normal navigation occurs in the main browser area.
 | Browser | Assistant surface | Action implementation | Launch command |
 |---|---|---|---|
 | Google Chrome | Chrome side panel | WebExtension APIs plus DevTools debugger input | `ollama launch chrome` |
+| Chromium / custom instance | Chromium side panel | Manually loaded WebExtension | `ollama launch chromium --bridge-only` |
 | Microsoft Edge | Edge side panel | WebExtension APIs plus DevTools debugger input | `ollama launch edge` |
 | Mozilla Firefox | Firefox sidebar | WebExtension APIs plus semantic DOM-event fallbacks | Manual extension load |
 | Perplexity Comet | Native Comet sidecar | Signed Comet Agent `/agent` protocol | `ollama launch comet` |
@@ -102,6 +199,20 @@ cd AutonomousBrowserAutomation
 .\Install-AutonomousBrowserAutomation.ps1
 ```
 
+To configure an exact browser executable or installation folder during setup:
+
+```powershell
+.\Install-AutonomousBrowserAutomation.ps1 `
+  -Browser chromium `
+  -BrowserPath "C:\Tools\Chromium"
+```
+
+The installer accepts either the executable itself or its installation folder,
+validates it, and stores the resolved path in
+`%LOCALAPPDATA%\AutonomousBrowserAutomation\browser-paths.json`. Future
+`ollama launch chromium` commands use that executable automatically. Repeat the
+command with `chrome` or `edge` to configure those browsers.
+
 The installer:
 
 - Builds the Chromium extension.
@@ -117,6 +228,7 @@ Open a new terminal after installation.
 
 ```powershell
 ollama launch chrome
+ollama launch chromium
 ollama launch edge
 ollama launch comet
 ```
@@ -137,6 +249,42 @@ ollama launch chrome --config
 
 Configuration is shared by all three launch commands. Other Ollama commands are
 forwarded unchanged to the official `ollama.exe`.
+
+The installer adds an idempotent PowerShell function that routes `ollama`
+through the project wrapper. In an already-open PowerShell window, refresh it:
+
+```powershell
+. $PROFILE.CurrentUserAllHosts
+```
+
+### Connect an existing Chromium instance
+
+If you already loaded the extension into a specific Chromium profile, do not
+launch another browser. Start only the bridge:
+
+```powershell
+ollama launch chromium --bridge-only
+```
+
+Then open **Autonomous Browser Assistant → Extension options** and set:
+
+- Bridge URL: `http://127.0.0.1:11435`
+- Bridge token: copy the contents of
+  `%LOCALAPPDATA%\OllamaComet\bridge.token`
+
+Open the extension side panel. The background extension begins polling the
+bridge and browser actions execute in the active Chromium tab.
+
+The bridge token remains required as a loopback authorization secret. The
+launcher generates it and writes it to the installed extension configuration;
+it is not an Ollama API key. Removing this check would allow unrelated local
+pages or processes to submit browser-control requests to the bridge.
+
+To launch a specific Chromium executable instead:
+
+```powershell
+ollama launch chromium --browser-path "C:\path\to\chromium.exe"
+```
 
 ### Chrome and Edge first launch
 

@@ -155,6 +155,8 @@ class BridgeRoutingTests(unittest.TestCase):
     def test_chromium_target_selects_connected_extension(self):
         server = FakeServer()
         self.assertTrue(bridge.should_use_browser_extension(server))
+        server.browser_target = "chromium"
+        self.assertTrue(bridge.should_use_browser_extension(server))
 
 
 if __name__ == "__main__":
