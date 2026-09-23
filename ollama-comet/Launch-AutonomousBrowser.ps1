@@ -262,6 +262,12 @@ if ($Restore) {
     if (Test-Path $credentialPath) {
         Remove-Item -LiteralPath $credentialPath -Force
     }
+    if (Test-Path $tokenPath) {
+        Remove-Item -LiteralPath $tokenPath -Force
+    }
+    if (Test-Path $targetPath) {
+        Remove-Item -LiteralPath $targetPath -Force
+    }
     Write-Host 'Autonomous browser configuration was restored to local defaults.'
     return
 }
@@ -346,16 +352,24 @@ if (-not $bridgeHealthy) {
     if (-not (Test-Path $appRoot)) {
         New-Item -ItemType Directory -Path $appRoot -Force | Out-Null
     }
-    $tokenBytes = New-Object byte[] 32
-    $random = [Security.Cryptography.RandomNumberGenerator]::Create()
-    try {
-        $random.GetBytes($tokenBytes)
+    $token = if (Test-Path $tokenPath) {
+        (Get-Content -Raw $tokenPath).Trim()
     }
-    finally {
-        $random.Dispose()
+    else {
+        ''
     }
-    $token = [Convert]::ToBase64String($tokenBytes).TrimEnd('=').Replace('+', '-').Replace('/', '_')
-    Set-Content -Path $tokenPath -Value $token -Encoding ASCII
+    if ([string]::IsNullOrWhiteSpace($token)) {
+        $tokenBytes = New-Object byte[] 32
+        $random = [Security.Cryptography.RandomNumberGenerator]::Create()
+        try {
+            $random.GetBytes($tokenBytes)
+        }
+        finally {
+            $random.Dispose()
+        }
+        $token = [Convert]::ToBase64String($tokenBytes).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+        Set-Content -Path $tokenPath -Value $token -Encoding ASCII
+    }
 
     $oldApiKey = $env:OLLAMA_COMET_API_KEY
     try {

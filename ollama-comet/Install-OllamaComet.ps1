@@ -111,7 +111,6 @@ if (Test-Path $runtimePidPath) {
         }
     }
     Remove-Item -LiteralPath $runtimePidPath -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $runtimeTokenPath -Force -ErrorAction SilentlyContinue
 }
 
 if (-not (Test-Path $installRoot)) {

@@ -276,9 +276,11 @@ Open the extension side panel. The background extension begins polling the
 bridge and browser actions execute in the active Chromium tab.
 
 The bridge token remains required as a loopback authorization secret. The
-launcher generates it and writes it to the installed extension configuration;
-it is not an Ollama API key. Removing this check would allow unrelated local
-pages or processes to submit browser-control requests to the bridge.
+launcher generates it once per Windows user, reuses it across bridge restarts,
+and writes it to the installed extension configuration. It is not an Ollama API
+key. Removing this check would allow unrelated local pages or processes to
+submit browser-control requests to the bridge. Running `--restore` revokes the
+saved token, and the next launch generates a replacement.
 
 To launch a specific Chromium executable instead:
 
