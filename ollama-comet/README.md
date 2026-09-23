@@ -3,6 +3,8 @@
 This integration adds a user-level command:
 
 ```powershell
+ollama launch chrome
+ollama launch edge
 ollama launch comet
 ```
 
@@ -15,6 +17,8 @@ It does **not** patch or replace the signed Comet executable. It starts a loopba
 - Local/Cloud provider and model selection in the assistant UI
 - Model selection with `--model`
 - The native Comet assistant button opens the local Ollama assistant
+- Chrome and Edge launch in isolated profiles connected through the independent
+  Autonomous Browser Assistant extension
 - A responsive pastel-teal assistant layout with an independently scrolling conversation and a composer that stays visible in smaller windows
 - Safe Markdown rendering, including headings, lists, code blocks, and tables
 - Image paste/upload plus local text extraction from PDF, DOCX, and XLSX attachments

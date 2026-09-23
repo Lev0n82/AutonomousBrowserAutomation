@@ -11,9 +11,20 @@ const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, mil
 async function getConfig() {
   if (!config) {
     const saved = await chrome.storage.local.get(DEFAULT_CONFIG);
+    let managed = {};
+    try {
+      const response = await fetch(chrome.runtime.getURL("runtime-config.json"), {
+        cache: "no-store"
+      });
+      if (response.ok) managed = await response.json();
+    } catch {
+      managed = {};
+    }
     config = {
-      bridgeUrl: String(saved.bridgeUrl || DEFAULT_CONFIG.bridgeUrl).replace(/\/+$/, ""),
-      token: String(saved.token || "")
+      bridgeUrl: String(
+        managed.bridgeUrl || saved.bridgeUrl || DEFAULT_CONFIG.bridgeUrl
+      ).replace(/\/+$/, ""),
+      token: String(managed.token || saved.token || "")
     };
   }
   return config;
