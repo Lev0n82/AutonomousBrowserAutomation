@@ -55,6 +55,7 @@ class FakeServer:
     server_port = 11435
     access_token = "test-token"
     api_key = ""
+    browser_target = "chrome"
 
     def __init__(self):
         self.browser_broker = FakeBroker()
@@ -145,6 +146,15 @@ class BridgeRoutingTests(unittest.TestCase):
         worker.join(timeout=2)
 
         self.assertEqual(outcome["value"], {"title": "Test page"})
+
+    def test_comet_target_does_not_select_generic_extension(self):
+        server = FakeServer()
+        server.browser_target = "comet"
+        self.assertFalse(bridge.should_use_browser_extension(server))
+
+    def test_chromium_target_selects_connected_extension(self):
+        server = FakeServer()
+        self.assertTrue(bridge.should_use_browser_extension(server))
 
 
 if __name__ == "__main__":

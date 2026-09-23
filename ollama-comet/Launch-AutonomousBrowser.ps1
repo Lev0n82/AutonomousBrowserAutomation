@@ -27,6 +27,7 @@ $configPath = Join-Path $appRoot 'config.json'
 $credentialPath = Join-Path $appRoot 'cloud-key.clixml'
 $pidPath = Join-Path $appRoot 'bridge.pid'
 $tokenPath = Join-Path $appRoot 'bridge.token'
+$targetPath = Join-Path $appRoot 'bridge.target'
 $logPath = Join-Path $appRoot 'bridge.log'
 $errorLogPath = Join-Path $appRoot 'bridge-error.log'
 $profilePath = Join-Path $appRoot "$Browser Profile"
@@ -128,20 +129,19 @@ function Save-Configuration {
 }
 
 function Stop-Bridge {
-    if (-not (Test-Path $pidPath)) {
-        return
-    }
-
-    $bridgeProcessId = 0
-    if ([int]::TryParse((Get-Content -Raw $pidPath).Trim(), [ref]$bridgeProcessId)) {
-        $process = Get-Process -Id $bridgeProcessId -ErrorAction SilentlyContinue
-        if ($null -ne $process) {
-            Stop-Process -Id $bridgeProcessId -Force
-            $process.WaitForExit(5000)
+    if (Test-Path $pidPath) {
+        $bridgeProcessId = 0
+        if ([int]::TryParse((Get-Content -Raw $pidPath).Trim(), [ref]$bridgeProcessId)) {
+            $process = Get-Process -Id $bridgeProcessId -ErrorAction SilentlyContinue
+            if ($null -ne $process) {
+                Stop-Process -Id $bridgeProcessId -Force
+                $process.WaitForExit(5000)
+            }
         }
     }
     Remove-Item -LiteralPath $pidPath -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $tokenPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $targetPath -Force -ErrorAction SilentlyContinue
 }
 
 function Configure-Integration {
@@ -250,6 +250,16 @@ elseif ($configuration.mode -eq 'cloud') {
         throw 'Cloud mode is configured but no Windows-protected API key exists. Run: ollama launch comet --config'
 }
 
+$runningTarget = if (Test-Path $targetPath) {
+    (Get-Content -Raw $targetPath).Trim()
+}
+else {
+    ''
+}
+if ($runningTarget -and $runningTarget -ne $Browser) {
+    Stop-Bridge
+}
+
 $bridgeHealthy = $false
 try {
     $health = Invoke-RestMethod -Uri "http://127.0.0.1:$port/health" -TimeoutSec 2
@@ -280,12 +290,18 @@ if (-not $bridgeHealthy) {
             $env:OLLAMA_COMET_API_KEY = $apiKey
         }
         $process = Start-Process -FilePath $pythonPath `
-            -ArgumentList @($bridgeScript, '--port', $port, '--token', $token) `
+            -ArgumentList @(
+                $bridgeScript,
+                '--port', $port,
+                '--token', $token,
+                '--browser-target', $Browser
+            ) `
             -WindowStyle Hidden `
             -RedirectStandardOutput $logPath `
             -RedirectStandardError $errorLogPath `
             -PassThru
         Set-Content -Path $pidPath -Value $process.Id -Encoding ASCII
+        Set-Content -Path $targetPath -Value $Browser -Encoding ASCII
     }
     finally {
         $env:OLLAMA_COMET_API_KEY = $oldApiKey

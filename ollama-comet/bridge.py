@@ -1357,6 +1357,13 @@ def sensitive_allowed(messages):
     return any(word in normalized for word in SENSITIVE_WORDS)
 
 
+def should_use_browser_extension(server):
+    return (
+        server.browser_target in {"chrome", "edge", "firefox", "extension"}
+        and server.browser_broker.connected()
+    )
+
+
 def run_agent(server, payload):
     config = load_config()
     model = payload.get("model") or config["model"]
@@ -1377,7 +1384,7 @@ def run_agent(server, payload):
     tool_names = {tool["function"]["name"] for tool in BROWSER_TOOLS}
     task_id = str(payload.get("task_id") or uuid.uuid4())
     cancel_event = server.agent_tasks.create(task_id)
-    use_browser_extension = server.browser_broker.connected()
+    use_browser_extension = should_use_browser_extension(server)
     native_session = (
         None
         if use_browser_extension
@@ -2226,7 +2233,11 @@ class Handler(BaseHTTPRequestHandler):
                 200,
                 {
                     "status": "ok",
-                    "browser_control": (
+                    "browser_target": self.server.browser_target,
+                    "extension_control": (
+                        "connected" if self.server.browser_broker.connected() else "waiting"
+                    ),
+                    "native_comet_control": (
                         "connected" if self.server.browser_controller.connected() else "waiting"
                     ),
                 },
@@ -2462,10 +2473,16 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=11435)
     parser.add_argument("--token", required=True)
+    parser.add_argument(
+        "--browser-target",
+        choices=("chrome", "edge", "firefox", "extension", "comet"),
+        default="comet",
+    )
     args = parser.parse_args()
 
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     server.access_token = args.token
+    server.browser_target = args.browser_target
     server.api_key = os.environ.get("OLLAMA_COMET_API_KEY", "")
     server.browser_broker = BrowserBroker()
     server.browser_controller = CDPBrowserController()

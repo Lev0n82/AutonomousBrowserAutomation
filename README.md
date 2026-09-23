@@ -3,9 +3,9 @@
 Use local or Ollama Cloud models as an autonomous assistant inside Chrome,
 Microsoft Edge, Firefox, or Perplexity Comet.
 
-[Download Chromium extension ZIP](https://github.com/Lev0n82/AutonomousBrowserAutomation/releases/download/v0.2.0/AutonomousBrowserAutomation-Chromium-v0.2.0.zip)
+[Download Chromium extension ZIP](https://github.com/Lev0n82/AutonomousBrowserAutomation/releases/download/v0.2.1/AutonomousBrowserAutomation-Chromium-v0.2.1.zip)
 ·
-[Download Firefox extension ZIP](https://github.com/Lev0n82/AutonomousBrowserAutomation/releases/download/v0.2.0/AutonomousBrowserAutomation-Firefox-v0.2.0.zip)
+[Download Firefox extension ZIP](https://github.com/Lev0n82/AutonomousBrowserAutomation/releases/download/v0.2.1/AutonomousBrowserAutomation-Firefox-v0.2.1.zip)
 ·
 [View all releases](https://github.com/Lev0n82/AutonomousBrowserAutomation/releases)
 
@@ -162,7 +162,7 @@ the installed unpacked extension directory. It is not committed to Git.
 ### Chrome or Edge
 
 1. Download and extract the
-   [Chromium ZIP](https://github.com/Lev0n82/AutonomousBrowserAutomation/releases/download/v0.2.0/AutonomousBrowserAutomation-Chromium-v0.2.0.zip).
+   [Chromium ZIP](https://github.com/Lev0n82/AutonomousBrowserAutomation/releases/download/v0.2.1/AutonomousBrowserAutomation-Chromium-v0.2.1.zip).
 2. Open `chrome://extensions` or `edge://extensions`.
 3. Enable **Developer mode**.
 4. Select **Load unpacked**.
@@ -174,7 +174,7 @@ the installed unpacked extension directory. It is not committed to Git.
 ### Firefox
 
 1. Download and extract the
-   [Firefox ZIP](https://github.com/Lev0n82/AutonomousBrowserAutomation/releases/download/v0.2.0/AutonomousBrowserAutomation-Firefox-v0.2.0.zip).
+   [Firefox ZIP](https://github.com/Lev0n82/AutonomousBrowserAutomation/releases/download/v0.2.1/AutonomousBrowserAutomation-Firefox-v0.2.1.zip).
 2. Open `about:debugging#/runtime/this-firefox`.
 3. Select **Load Temporary Add-on**.
 4. Choose the extracted `manifest.json`.
