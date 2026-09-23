@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Autonomous Browser Assistant settings</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <main>
+    <h1>Connection settings</h1>
+    <p>The bridge listens only on your computer. Copy the current token from the bridge launcher output or token file.</p>
+    <form id="form">
+      <label>
+        Bridge URL
+        <input id="bridge-url" type="url" required value="http://127.0.0.1:11435">
+      </label>
+      <label>
+        Bridge token
+        <input id="token" type="password" required autocomplete="off">
+      </label>
+      <div class="actions">
+        <button type="submit">Save</button>
+        <button id="test" type="button">Test connection</button>
+      </div>
+      <output id="status"></output>
+    </form>
+  </main>
+  <script src="options.js"></script>
+</body>
+</html>

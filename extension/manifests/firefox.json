@@ -1,0 +1,47 @@
+{
+  "manifest_version": 3,
+  "name": "Autonomous Browser Assistant",
+  "version": "0.1.0",
+  "description": "Connect Firefox to a local Ollama-powered browser automation bridge.",
+  "permissions": [
+    "alarms",
+    "scripting",
+    "storage",
+    "tabs",
+    "webNavigation"
+  ],
+  "host_permissions": [
+    "<all_urls>",
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ],
+  "background": {
+    "scripts": [
+      "background.js"
+    ]
+  },
+  "action": {
+    "default_title": "Open Autonomous Browser Assistant"
+  },
+  "sidebar_action": {
+    "default_title": "Autonomous Browser Assistant",
+    "default_panel": "sidepanel.html",
+    "open_at_install": false
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "autonomous-browser-assistant@ollama.local",
+      "strict_min_version": "140.0",
+      "data_collection_permissions": {
+        "required": [
+          "browsingActivity",
+          "websiteContent"
+        ]
+      }
+    }
+  }
+}

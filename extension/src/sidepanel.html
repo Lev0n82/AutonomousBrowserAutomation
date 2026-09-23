@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Autonomous Browser Assistant</title>
+  <link rel="stylesheet" href="panel.css">
+</head>
+<body>
+  <header>
+    <div>
+      <strong>Autonomous Browser Assistant</strong>
+      <span id="status">Checking bridge...</span>
+    </div>
+    <button id="settings" type="button" title="Connection settings">Settings</button>
+  </header>
+  <main>
+    <section id="setup" hidden>
+      <h1>Connect the local bridge</h1>
+      <p>Set the loopback bridge URL and token before using browser actions.</p>
+      <button id="configure" type="button">Open settings</button>
+    </section>
+    <iframe id="assistant" title="Ollama browser assistant" hidden></iframe>
+  </main>
+  <script src="sidepanel.js"></script>
+</body>
+</html>

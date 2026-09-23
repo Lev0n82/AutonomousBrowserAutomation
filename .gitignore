@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+extension/dist/
+.idea/
+.vscode/
+*.log
+*.pid
+*.token
+cloud-key.clixml
+config.json
