@@ -1,0 +1,23 @@
+---
+title: Chrome
+---
+
+## Install
+
+The `chrome` integration drives your local [Google Chrome](https://www.google.com/chrome/) or [Chromium](https://www.chromium.org/) installation with Ollama models. It requires the [AutonomousBrowserAutomation companion integration](https://github.com/Lev0n82/AutonomousBrowserAutomation), which the launcher offers to install on first run (Windows PowerShell required; the companion is Windows-only today with cross-platform support on the roadmap).
+
+## Usage with Ollama
+
+```bash
+ollama launch chrome
+```
+
+`chromium` is available as an alias.
+
+To configure without launching:
+
+```bash
+ollama launch chrome --config
+```
+
+The selected model is passed to the companion launcher, which starts Chrome with an isolated user data directory and remote debugging enabled, then routes agent traffic through your local Ollama instance. An isolated profile is required because Chrome 136+ ignores the remote debugging flag when the default profile is in use.

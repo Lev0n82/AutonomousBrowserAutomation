@@ -1,0 +1,23 @@
+---
+title: Perplexity Comet
+---
+
+## Install
+
+The `comet` integration drives [Perplexity Comet](https://www.perplexity.ai/comet), an agentic browser, with Ollama models. It requires the [AutonomousBrowserAutomation companion integration](https://github.com/Lev0n82/AutonomousBrowserAutomation), which the launcher offers to install on first run (Windows PowerShell required; the companion is Windows-only today with cross-platform support on the roadmap).
+
+## Usage with Ollama
+
+```bash
+ollama launch comet
+```
+
+`comet` is also available as the `perplexity` alias.
+
+To configure without launching:
+
+```bash
+ollama launch comet --config
+```
+
+The selected model is passed to the companion launcher, which starts Comet in an isolated browser profile and routes agent traffic through your local Ollama instance. Launch Comet again through `ollama launch comet` to keep model routing intact.
