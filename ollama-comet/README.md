@@ -1,10 +1,32 @@
-# Ollama launcher for Perplexity Comet
+# 🚀 Ollama Launcher — Autonomous Browser Automation
 
-This integration adds a user-level command:
+> One command launches your browser with a built-in, Ollama-powered assistant and autonomous web agent.
+
+[![Ollama](https://img.shields.io/badge/Ollama-launcher-1f6feb)](#what-works)
+[![Chrome](https://img.shields.io/badge/Chrome-supported-4285F4?logo=googlechrome&logoColor=white)](#browser-support)
+[![Chromium](https://img.shields.io/badge/Chromium-supported-77AAD3?logo=chromium&logoColor=white)](#browser-support)
+[![Edge](https://img.shields.io/badge/Edge-supported-0078D7?logo=microsoftedge&logoColor=white)](#browser-support)
+[![Firefox](https://img.shields.io/badge/Firefox-supported-FF7139?logo=firefoxbrowser&logoColor=white)](#browser-support)
+[![Comet](https://img.shields.io/badge/Comet-supported-597BC8)](#browser-support)
+
+## 🌐 Browser support
+
+| Browser | Command | Launch mechanism | Status |
+|---|---|---|---|
+| **Google Chrome** | `ollama launch chrome` | Isolated profile + unpacked extension, auto enterprise-policy allowlist | ✅ |
+| **Chromium** | `ollama launch chromium` | Isolated profile + `--load-extension` (no policy needed) | ✅ |
+| **Microsoft Edge** | `ollama launch edge` | Isolated profile + unpacked extension, auto enterprise-policy allowlist | ✅ |
+| **Mozilla Firefox** | `ollama launch firefox` | Isolated profile + XPI via `make_xpi.py`, enterprise `force_installed` policy or `about:debugging` fallback | ✅ |
+| **Perplexity Comet** | `ollama launch comet` | Native signed `comet-agent` extension over the `/agent` WebSocket bridge | ✅ |
+
+Every browser gets the same assistant experience: local Ollama models, Ollama Cloud, tool-calling tab control, autonomous task execution with confirmations, and the pastel-teal side panel UI.
+
+## 🖥️ Quick start
 
 ```powershell
 ollama launch chrome
 ollama launch edge
+ollama launch firefox
 ollama launch comet
 ```
 
@@ -17,7 +39,7 @@ It does **not** patch or replace the signed Comet executable. It starts a loopba
 - Local/Cloud provider and model selection in the assistant UI
 - Model selection with `--model`
 - The native Comet assistant button opens the local Ollama assistant
-- Chrome and Edge launch in isolated profiles connected through the independent
+- Chrome, Edge, and Firefox launch in isolated profiles connected through the
   Autonomous Browser Assistant extension
 - A responsive pastel-teal assistant layout with an independently scrolling conversation and a composer that stays visible in smaller windows
 - Safe Markdown rendering, including headings, lists, code blocks, and tables
@@ -163,6 +185,16 @@ On managed machines, `ExtensionInstallBlocklist = 1 = *` blocks unpacked extensi
 4. If machine policy is managed and the session is not elevated, it warns with the extension ID and remediation options instead of failing silently.
 
 Run once from an elevated terminal to fix HKLM, or send the printed ID (e.g. `hbkpoamkaedodghekihigfbbhkibkfjm`) to IT for allowlisting. `ollama launch chromium` is unaffected — `--load-extension` there is not subject to the enterprise blocklist.
+
+## Firefox support
+
+`ollama launch firefox` launches Firefox with an isolated `Firefox Profile` and connects it to the same Autonomous Browser Assistant through a signed-packing workflow instead of the Chrome-style `--load-extension` flag:
+
+1. The launcher packages `extension\dist\firefox` into an XPI (`autonomous-browser-assistant.xpi`) with `make_xpi.py` and the local Python installation.
+2. When run from an elevated terminal, it installs the XPI through the Firefox enterprise policy at `HKLM\SOFTWARE\Policies\Mozilla\Firefox` (`ExtensionSettings` → `installation_mode: force_installed`, `xpinstall.signatures.required = false`), merging into any existing policy values.
+3. On release Firefox builds, unsigned XPI policies are silently ignored; if no policy is installed, the launcher also opens `about:debugging#/runtime/this-firefox` where the assistant can be loaded with **Load Temporary Add-on**.
+
+Firefox (like Nightly, Dev Edition, or ESR) honors the force-installed policy directly. The bridge, vault, launchpad, and assistant behave identically to Chrome and Edge.
 
 ## Limitations
 

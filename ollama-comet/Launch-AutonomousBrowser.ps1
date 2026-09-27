@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter()]
-    [ValidateSet('chrome', 'chromium', 'edge', 'comet')]
+    [ValidateSet('chrome', 'chromium', 'edge', 'firefox', 'comet')]
     [string]$Browser = 'comet',
 
     [Parameter()]
@@ -40,13 +40,26 @@ $browserPathsPath = Join-Path $env:LOCALAPPDATA 'AutonomousBrowserAutomation\bro
 $profilePath = Join-Path $appRoot "$Browser Profile"
 $bridgeScript = Join-Path $PSScriptRoot 'bridge.py'
 $installedExtensionPath = Join-Path $PSScriptRoot 'browser-extension'
-$sourceExtensionPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'extension\dist\chromium'
-$extensionPath = if (Test-Path (Join-Path $installedExtensionPath 'manifest.json')) {
+$installedFirefoxExtensionPath = Join-Path $PSScriptRoot 'browser-extension-firefox'
+$extensionDistName = if ($Browser -eq 'firefox') { 'firefox' } else { 'chromium' }
+$sourceExtensionPath = Join-Path (Split-Path -Parent $PSScriptRoot) ("extension\dist\$extensionDistName")
+# The installed browser-extension copy is a Chromium build; Firefox must use its
+# own dist (or an installed browser-extension-firefox copy) instead.
+$extensionPath = if ($Browser -eq 'firefox') {
+    if (Test-Path (Join-Path $installedFirefoxExtensionPath 'manifest.json')) {
+        $installedFirefoxExtensionPath
+    }
+    else {
+        $sourceExtensionPath
+    }
+}
+elseif (Test-Path (Join-Path $installedExtensionPath 'manifest.json')) {
     $installedExtensionPath
 }
 else {
     $sourceExtensionPath
 }
+$firefoxExtensionId = 'autonomous-browser-assistant@ollama.local'
 $pythonPath = 'C:\Python314\python.exe'
 $cometPath = 'C:\Program Files\Perplexity\Comet\Application\comet.exe'
 $port = 11435
@@ -407,6 +420,99 @@ function Ensure-ExtensionPolicy {
     }
 }
 
+function New-FirefoxExtensionPackage {
+    param(
+        [Parameter(Mandatory)] [string]$SourceDir,
+        [Parameter(Mandatory)] [string]$DestinationPath
+    )
+
+    if (-not (Test-Path (Join-Path $SourceDir 'manifest.json'))) {
+        return $null
+    }
+    $parentDirectory = Split-Path -Parent $DestinationPath
+    if (-not (Test-Path -LiteralPath $parentDirectory)) {
+        New-Item -ItemType Directory -Path $parentDirectory -Force | Out-Null
+    }
+    if (Test-Path -LiteralPath $DestinationPath) {
+        Remove-Item -LiteralPath $DestinationPath -Force -ErrorAction SilentlyContinue
+    }
+    $helperScript = Join-Path $PSScriptRoot 'make_xpi.py'
+    if (-not (Test-Path $helperScript)) {
+        return $null
+    }
+    & $pythonPath $helperScript $SourceDir $DestinationPath | Out-Null
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $DestinationPath)) {
+        return $null
+    }
+    return $DestinationPath
+}
+
+function Ensure-FirefoxExtensionPolicy {
+    param(
+        [Parameter(Mandatory)] [string]$ExtensionId,
+        [Parameter(Mandatory)] [string]$PackagePath,
+        [bool]$IsElevated = (Test-IsElevated),
+        [string]$PoliciesRoot = 'HKLM:\SOFTWARE\Policies\Mozilla\Firefox'
+    )
+
+    if (-not (Test-Path -LiteralPath $PackagePath)) {
+        return [pscustomobject]@{ Result = 'package-unavailable' }
+    }
+    if (-not $IsElevated) {
+        return [pscustomobject]@{ Result = 'needs-elevation' }
+    }
+    if (-not (Test-Path $PoliciesRoot)) {
+        New-Item -Path $PoliciesRoot -Force | Out-Null
+    }
+    $installUri = [Uri]$PackagePath
+    $entry = [pscustomobject]@{
+        installation_mode = 'force_installed'
+        install_url = $installUri.AbsoluteUri
+    }
+    $settingsObject = $null
+    $settingsValue = (Get-ItemProperty -LiteralPath $PoliciesRoot -Name ExtensionSettings -ErrorAction SilentlyContinue).ExtensionSettings
+    if ($settingsValue) {
+        try {
+            $settingsObject = $settingsValue | ConvertFrom-Json
+        }
+        catch {
+            $settingsObject = $null
+        }
+    }
+    if ($null -eq $settingsObject -or $settingsObject -isnot [pscustomobject]) {
+        $settingsObject = [pscustomobject]@{}
+    }
+    if ($settingsObject.PSObject.Properties.Name -contains $ExtensionId) {
+        $settingsObject.PSObject.Properties.Remove($ExtensionId)
+    }
+    $settingsObject | Add-Member -NotePropertyName $ExtensionId -NotePropertyValue $entry
+    New-ItemProperty -LiteralPath $PoliciesRoot -Name ExtensionSettings `
+        -Value ($settingsObject | ConvertTo-Json -Depth 8 -Compress) `
+        -PropertyType String -Force | Out-Null
+
+    $preferencesObject = $null
+    $preferencesValue = (Get-ItemProperty -LiteralPath $PoliciesRoot -Name Preferences -ErrorAction SilentlyContinue).Preferences
+    if ($preferencesValue) {
+        try {
+            $preferencesObject = $preferencesValue | ConvertFrom-Json
+        }
+        catch {
+            $preferencesObject = $null
+        }
+    }
+    if ($null -eq $preferencesObject -or $preferencesObject -isnot [pscustomobject]) {
+        $preferencesObject = [pscustomobject]@{}
+    }
+    if ($preferencesObject.PSObject.Properties.Name -contains 'xpinstall.signatures.required') {
+        $preferencesObject.PSObject.Properties.Remove('xpinstall.signatures.required')
+    }
+    $preferencesObject | Add-Member -NotePropertyName 'xpinstall.signatures.required' -NotePropertyValue $false
+    New-ItemProperty -LiteralPath $PoliciesRoot -Name Preferences `
+        -Value ($preferencesObject | ConvertTo-Json -Depth 8 -Compress) `
+        -PropertyType String -Force | Out-Null
+    return [pscustomobject]@{ Result = 'policy-installed' }
+}
+
 function Set-DeveloperModePreference {
     param([Parameter(Mandatory)] [string]$ProfileRoot)
 
@@ -508,6 +614,13 @@ function Resolve-BrowserPath {
                 (Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application\msedge.exe'),
                 (Join-Path $env:ProgramFiles 'Microsoft\Edge\Application\msedge.exe'),
                 (Join-Path $env:LOCALAPPDATA 'Microsoft\Edge\Application\msedge.exe')
+            )
+        }
+        'firefox' {
+            @(
+                (Join-Path $env:ProgramFiles 'Mozilla Firefox\firefox.exe'),
+                (Join-Path ${env:ProgramFiles(x86)} 'Mozilla Firefox\firefox.exe'),
+                (Join-Path $env:LOCALAPPDATA 'Mozilla Firefox\firefox.exe')
             )
         }
         'comet' { @($cometPath) }
@@ -683,19 +796,32 @@ else {
 if ($Browser -ne 'comet' -and -not (Test-Path (Join-Path $extensionPath 'manifest.json'))) {
     throw "The browser extension was not found at $extensionPath. Re-run Install-OllamaComet.ps1."
 }
-$extensionId = if ($Browser -ne 'comet') { Get-UnpackedExtensionId -Path $extensionPath } else { $null }
+$extensionId = if ($Browser -eq 'comet') {
+    $null
+}
+elseif ($Browser -eq 'firefox') {
+    $firefoxExtensionId
+}
+else {
+    Get-UnpackedExtensionId -Path $extensionPath
+}
 if ($Validate) {
     Write-Host "Browser: $Browser"
     Write-Host "Executable: $(if ($resolvedBrowserPath) { $resolvedBrowserPath } else { 'not required (bridge only)' })"
     if ($Browser -ne 'comet') {
         Write-Host "Extension: $extensionPath"
         Write-Host "Extension ID: $extensionId"
-        $policyStatus = Get-ExtensionPolicyStatus -Browser $Browser -ExtensionId $extensionId
-        if ($policyStatus.Blocked) {
-            Write-Host "Extension policy: BLOCKED by enterprise policy (wildcard or ID blocklist). Re-run from an elevated terminal to clear it, ask IT to update policy, or use: ollama launch chromium" -ForegroundColor Yellow
+        if ($Browser -eq 'firefox') {
+            Write-Host 'Extension install: Firefox packages this dist as an XPI and installs it through the Firefox enterprise policy when the terminal is elevated.'
         }
         else {
-            Write-Host 'Extension policy: no blocking policy detected.'
+            $policyStatus = Get-ExtensionPolicyStatus -Browser $Browser -ExtensionId $extensionId
+            if ($policyStatus.Blocked) {
+                Write-Host "Extension policy: BLOCKED by enterprise policy (wildcard or ID blocklist). Re-run from an elevated terminal to clear it, ask IT to update policy, or use: ollama launch chromium" -ForegroundColor Yellow
+            }
+            else {
+                Write-Host 'Extension policy: no blocking policy detected.'
+            }
         }
     }
     Write-Host 'Launcher validation succeeded.' -ForegroundColor Green
@@ -723,7 +849,29 @@ elseif ($configuration.mode -eq 'cloud') {
 }
 
 $policyOutcome = $null
-if ($Browser -ne 'comet') {
+$firefoxXpiPath = $null
+if ($Browser -eq 'firefox') {
+    $firefoxXpiPath = Join-Path $appRoot 'autonomous-browser-assistant.xpi'
+    $packagedPath = New-FirefoxExtensionPackage -SourceDir $extensionPath -DestinationPath $firefoxXpiPath
+    if (-not $packagedPath) {
+        Write-Host "The Firefox extension package could not be built from $extensionPath." -ForegroundColor Yellow
+    }
+    $policyOutcome = Ensure-FirefoxExtensionPolicy -ExtensionId $firefoxExtensionId -PackagePath $firefoxXpiPath
+    switch ($policyOutcome.Result) {
+        'policy-installed' {
+            Write-Host 'Firefox enterprise policy updated: the Autonomous Browser Assistant XPI will install automatically on launch.' -ForegroundColor Green
+        }
+        'needs-elevation' {
+            Write-Host 'Firefox can install the extension automatically, but writing the enterprise policy requires an elevated terminal.' -ForegroundColor Yellow
+            Write-Host 'Re-run this launch from an Administrator terminal, or load it manually via about:debugging (Load Temporary Add-on).'
+        }
+        'package-unavailable' {
+            Write-Host 'Skipping Firefox policy setup because the XPI package is unavailable.' -ForegroundColor Yellow
+        }
+        default { }
+    }
+}
+elseif ($Browser -ne 'comet') {
     $policyOutcome = Ensure-ExtensionPolicy -Browser $Browser -ExtensionId $extensionId
     switch ($policyOutcome.Result) {
         'needs-elevation' {
@@ -844,10 +992,11 @@ $assistantUrl = "http://127.0.0.1:$port/sidecar?token=$([Uri]::EscapeDataString(
 $extensionCdpPort = switch ($Browser) {
     'chrome' { 9224 }
     'edge' { 9225 }
+    'firefox' { 9226 }
     default { $debugPort }
 }
-$browserArguments = if ($Browser -eq 'comet') {
-    @(
+if ($Browser -eq 'comet') {
+    $browserArguments = @(
         "`"--user-data-dir=$profilePath`"",
         "--perplexity-backend-url=http://127.0.0.1:$port",
         "--remote-debugging-port=$debugPort",
@@ -857,6 +1006,29 @@ $browserArguments = if ($Browser -eq 'comet') {
         '--new-window',
         $assistantUrl
     )
+}
+elseif ($Browser -eq 'firefox') {
+    @{
+        bridgeUrl = "http://127.0.0.1:$port"
+        token = $token
+    } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $extensionPath 'runtime-config.json') -Encoding UTF8
+    if (-not (Test-Path $profilePath)) {
+        New-Item -ItemType Directory -Path $profilePath -Force | Out-Null
+    }
+    # Windows PowerShell 5.1 cannot bind a multi-statement subexpression (nested
+    # array) inside an array literal to Start-Process -ArgumentList string[].
+    # Build the argument list explicitly instead.
+    $argumentList = [System.Collections.Generic.List[string]]::new()
+    $argumentList.Add('-no-remote')
+    $argumentList.Add("--profile=`"$profilePath`"")
+    $argumentList.Add('--new-window')
+    $argumentList.Add($assistantUrl)
+    if (-not ($policyOutcome -and $policyOutcome.Result -eq 'policy-installed')) {
+        # The policy only takes effect at Firefox startup, so when automatic
+        # installation is not possible, open the temporary add-on page as well.
+        $argumentList.Add('about:debugging#/runtime/this-firefox')
+    }
+    $browserArguments = $argumentList.ToArray()
 }
 else {
     @{
@@ -882,7 +1054,7 @@ else {
     $argumentList.Add('--no-first-run')
     $argumentList.Add('--new-window')
     $argumentList.Add($assistantUrl)
-    $argumentList.ToArray()
+    $browserArguments = $argumentList.ToArray()
 }
 if ($ExtraArguments) {
     $browserArguments += $ExtraArguments
@@ -907,6 +1079,14 @@ else {
         # Chromium accepts --load-extension, so the extension is already active.
         $assistantReady = $true
     }
+    elseif ($Browser -eq 'firefox') {
+        if ($policyOutcome -and $policyOutcome.Result -eq 'policy-installed') {
+            $assistantReady = $true
+        }
+        elseif ($policyOutcome -and $policyOutcome.Result -eq 'package-unavailable') {
+            Write-Host "The Firefox extension package could not be prepared: $firefoxXpiPath" -ForegroundColor Yellow
+        }
+    }
     else {
         $cdpResult = Install-ExtensionViaCDP -HelperScript (Join-Path $PSScriptRoot 'install_extension_cdp.py') -ExtensionPath $extensionPath -Port $extensionCdpPort
         if ($cdpResult.Installed) {
@@ -917,17 +1097,25 @@ else {
             Write-Host "Automatic extension installation failed: $($cdpResult.Error)" -ForegroundColor Yellow
         }
     }
-    if ($policyOutcome -and ($policyOutcome.Result -eq 'needs-elevation' -or $policyOutcome.Result -eq 'needs-manual-policy')) {
+    if ($Browser -ne 'firefox' -and $policyOutcome -and ($policyOutcome.Result -eq 'needs-elevation' -or $policyOutcome.Result -eq 'needs-manual-policy')) {
         Write-Host 'The extension is still blocked by enterprise policy - see the policy guidance above.' -ForegroundColor Yellow
     }
     elseif (-not $assistantReady) {
-        Write-Host 'Opening the extensions page for one-time manual setup.' -ForegroundColor Yellow
-        Write-Host 'Enable Developer mode, select Load unpacked, and choose:'
-        Write-Host "  $extensionPath" -ForegroundColor Cyan
-        Start-Process -FilePath $resolvedBrowserPath -ArgumentList @(
-            "`"--user-data-dir=$profilePath`"",
-            $(if ($Browser -eq 'edge') { 'edge://extensions/' } else { 'chrome://extensions/' })
-        ) | Out-Null
+        if ($Browser -eq 'firefox') {
+            Write-Host 'Opening about:debugging for one-time manual setup.' -ForegroundColor Yellow
+            Write-Host 'Select Load Temporary Add-on and choose the package (or its unpacked folder):'
+            Write-Host "  $firefoxXpiPath" -ForegroundColor Cyan
+            Write-Host "  $extensionPath" -ForegroundColor Cyan
+        }
+        else {
+            Write-Host 'Opening the extensions page for one-time manual setup.' -ForegroundColor Yellow
+            Write-Host 'Enable Developer mode, select Load unpacked, and choose:'
+            Write-Host "  $extensionPath" -ForegroundColor Cyan
+            Start-Process -FilePath $resolvedBrowserPath -ArgumentList @(
+                "`"--user-data-dir=$profilePath`"",
+                $(if ($Browser -eq 'edge') { 'edge://extensions/' } else { 'chrome://extensions/' })
+            ) | Out-Null
+        }
     }
     Write-Host 'Pin Autonomous Browser Assistant and select its toolbar icon to open the side panel.'
 }

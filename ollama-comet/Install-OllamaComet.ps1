@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter()]
-    [ValidateSet('chrome', 'chromium', 'edge', 'comet')]
+    [ValidateSet('chrome', 'chromium', 'edge', 'firefox', 'comet')]
     [string]$Browser,
 
     [Parameter()]
@@ -12,7 +12,7 @@ $ErrorActionPreference = 'Stop'
 
 $sourceRoot = $PSScriptRoot
 $installRoot = Join-Path $env:LOCALAPPDATA 'AutonomousBrowserAutomation\bin'
-$requiredFiles = @('bridge.py', 'Launch-AutonomousBrowser.ps1', 'Launch-OllamaComet.ps1', 'ollama.cmd', 'vault.py', 'ado.py', 'launchpad.py')
+$requiredFiles = @('bridge.py', 'Launch-AutonomousBrowser.ps1', 'Launch-OllamaComet.ps1', 'ollama.cmd', 'vault.py', 'ado.py', 'launchpad.py', 'make_xpi.py')
 $pythonPath = 'C:\Python314\python.exe'
 $runtimeRoot = Join-Path $env:LOCALAPPDATA 'OllamaComet'
 $runtimePidPath = Join-Path $runtimeRoot 'bridge.pid'
@@ -40,6 +40,7 @@ function Resolve-ConfiguredBrowserPath {
         'chrome' { @('chrome.exe', 'Application\chrome.exe') }
         'chromium' { @('chrome.exe', 'chromium.exe', 'Application\chrome.exe') }
         'edge' { @('msedge.exe', 'Application\msedge.exe') }
+        'firefox' { @('firefox.exe', 'firefox\firefox.exe') }
         'comet' { @('comet.exe', 'Application\comet.exe') }
     }
     foreach ($relativePath in $relativeCandidates) {
@@ -149,6 +150,17 @@ if (-not (Test-Path $extensionDestination)) {
 }
 Copy-Item -Path (Join-Path $extensionSource '*') -Destination $extensionDestination -Force
 
+& $buildScript -Target firefox
+$firefoxExtensionSource = Join-Path $projectRoot 'extension\dist\firefox'
+$firefoxExtensionDestination = Join-Path $installRoot 'browser-extension-firefox'
+if (-not (Test-Path (Join-Path $firefoxExtensionSource 'manifest.json'))) {
+    throw "Firefox extension build was not found at $firefoxExtensionSource"
+}
+if (-not (Test-Path $firefoxExtensionDestination)) {
+    New-Item -ItemType Directory -Path $firefoxExtensionDestination -Force | Out-Null
+}
+Copy-Item -Path (Join-Path $firefoxExtensionSource '*') -Destination $firefoxExtensionDestination -Force
+
 if (-not (Test-Path $pythonPath)) {
     throw "Python was not found at $pythonPath"
 }
@@ -183,6 +195,7 @@ Write-Host 'Open a new terminal, then run:'
 Write-Host '  ollama launch chrome'
 Write-Host '  ollama launch chromium --bridge-only'
 Write-Host '  ollama launch edge'
+Write-Host '  ollama launch firefox'
 Write-Host '  ollama launch comet'
 Write-Host 'To save a specific browser executable or installation folder, reinstall with:'
 Write-Host '  .\Install-AutonomousBrowserAutomation.ps1 -Browser chromium -BrowserPath "C:\path\to\Chromium"'

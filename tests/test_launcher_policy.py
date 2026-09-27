@@ -19,11 +19,16 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
+import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 LAUNCHER_PATH = ROOT / 'ollama-comet' / 'Launch-AutonomousBrowser.ps1'
+OLLAMA_CMD_PATH = ROOT / 'ollama-comet' / 'ollama.cmd'
+MAKE_XPI_PATH = ROOT / 'ollama-comet' / 'make_xpi.py'
 
 FUNCTION_NAMES = [
     'Get-ExtensionPolicyVendorKey',
@@ -36,6 +41,7 @@ FUNCTION_NAMES = [
     'Remove-BlocklistEntry',
     'Set-MachineDebuggingPolicy',
     'Ensure-ExtensionPolicy',
+    'Ensure-FirefoxExtensionPolicy',
 ]
 
 REG_ROOT = r'HKCU:\SOFTWARE\_OllamaCometPolicyTest'
@@ -43,6 +49,8 @@ REG_ROOT = r'HKCU:\SOFTWARE\_OllamaCometPolicyTest'
 ID_A = 'a' * 32
 ID_B = 'b' * 32
 ID_C = 'c' * 32
+
+FIREFOX_EXTENSION_ID = 'autonomous-browser-assistant@ollama.local'
 
 HARNESS_PRELUDE = """
 function Set-TestBlocklist([string]$Key, [string[]]$Values) {
@@ -371,11 +379,122 @@ class LauncherPolicyTests(unittest.TestCase):
             "[ordered]@{ chrome = Get-ExtensionPolicyVendorKey chrome; "
             'edge = Get-ExtensionPolicyVendorKey edge; '
             'chromium = Get-ExtensionPolicyVendorKey chromium; '
-            'comet = Get-ExtensionPolicyVendorKey comet } | ConvertTo-Json')
+            'comet = Get-ExtensionPolicyVendorKey comet; '
+            'firefox = Get-ExtensionPolicyVendorKey firefox } | ConvertTo-Json')
         self.assertEqual(result['chrome'], 'Google\\Chrome')
         self.assertEqual(result['edge'], 'Microsoft\\Edge')
         self.assertEqual(result['chromium'], 'Chromium')
         self.assertIsNone(result['comet'])
+        self.assertIsNone(result['firefox'])
+
+    def test_firefox_policy_needs_elevation_when_not_elevated(self):
+        result = self.run_harness(
+            'firefox-needs-elevation',
+            "$pkg = [System.IO.Path]::GetTempFileName()\n"
+            '$out = Ensure-FirefoxExtensionPolicy -ExtensionId '
+            + "'" + FIREFOX_EXTENSION_ID + "' -PackagePath $pkg "
+            '-IsElevated $false -PoliciesRoot $machine\n'
+            'Remove-Item -LiteralPath $pkg -Force\n'
+            "[ordered]@{ result = $out.Result; rootCreated = "
+            '(Test-Path $machine) } | ConvertTo-Json')
+        self.assertEqual(result['result'], 'needs-elevation')
+        self.assertFalse(result['rootCreated'])
+
+    def test_firefox_policy_unavailable_without_package(self):
+        result = self.run_harness(
+            'firefox-missing-package',
+            '$out = Ensure-FirefoxExtensionPolicy -ExtensionId '
+            + "'" + FIREFOX_EXTENSION_ID + "' "
+            "-PackagePath (Join-Path $machine 'missing.xpi') "
+            '-IsElevated $true -PoliciesRoot $machine\n'
+            "[ordered]@{ result = $out.Result; rootCreated = "
+            '(Test-Path $machine) } | ConvertTo-Json')
+        self.assertEqual(result['result'], 'package-unavailable')
+        self.assertFalse(result['rootCreated'])
+
+    def test_firefox_policy_installed_when_elevated(self):
+        result = self.run_harness(
+            'firefox-install',
+            "$pkg = [System.IO.Path]::GetTempFileName()\n"
+            '$out = Ensure-FirefoxExtensionPolicy -ExtensionId '
+            + "'" + FIREFOX_EXTENSION_ID + "' -PackagePath $pkg "
+            '-IsElevated $true -PoliciesRoot $machine\n'
+            '$settings = (Get-ItemProperty -LiteralPath $machine '
+            '-Name ExtensionSettings).ExtensionSettings | ConvertFrom-Json\n'
+            '$entry = $settings.' + "'" + FIREFOX_EXTENSION_ID + "'\n"
+            '$prefs = (Get-ItemProperty -LiteralPath $machine '
+            '-Name Preferences).Preferences | ConvertFrom-Json\n'
+            'Remove-Item -LiteralPath $pkg -Force\n'
+            "[ordered]@{ result = $out.Result; mode = $entry.installation_mode; "
+            'url = $entry.install_url; '
+            "signed = $prefs.'xpinstall.signatures.required' } | ConvertTo-Json")
+        self.assertEqual(result['result'], 'policy-installed')
+        self.assertEqual(result['mode'], 'force_installed')
+        self.assertTrue(result['url'].startswith('file:///'))
+        self.assertFalse(result['signed'])
+
+    def test_firefox_policy_preserves_existing_entries(self):
+        result = self.run_harness(
+            'firefox-merge',
+            "New-Item -Path $machine -Force | Out-Null\n"
+            "Set-ItemProperty -LiteralPath $machine -Name ExtensionSettings "
+            '-Value \'{"other@x.1":{"installation_mode":"blocked"}}\'\n'
+            "Set-ItemProperty -LiteralPath $machine -Name Preferences "
+            "-Value '{\"some.pref\":true}'\n"
+            "$pkg = Join-Path $machine 'addon.xpi'\n"
+            'New-Item -ItemType File -Path $pkg -Force | Out-Null\n'
+            '$out = Ensure-FirefoxExtensionPolicy -ExtensionId '
+            + "'" + FIREFOX_EXTENSION_ID + "' -PackagePath $pkg "
+            '-IsElevated $true -PoliciesRoot $machine\n'
+            '$settings = (Get-ItemProperty -LiteralPath $machine '
+            '-Name ExtensionSettings).ExtensionSettings | ConvertFrom-Json\n'
+            '$prefs = (Get-ItemProperty -LiteralPath $machine '
+            '-Name Preferences).Preferences | ConvertFrom-Json\n'
+            "[ordered]@{ result = $out.Result; "
+            "otherMode = $settings.'other@x.1'.installation_mode; "
+            "somePref = $prefs.'some.pref'; "
+            "signed = $prefs.'xpinstall.signatures.required' } | ConvertTo-Json")
+        self.assertEqual(result['result'], 'policy-installed')
+        self.assertEqual(result['otherMode'], 'blocked')
+        self.assertTrue(result['somePref'])
+        self.assertFalse(result['signed'])
+
+
+class FirefoxLauncherWiringTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.launcher_text = LAUNCHER_PATH.read_text(encoding='utf-8-sig')
+
+    def test_validate_set_includes_firefox(self):
+        self.assertIn("'firefox'", self.launcher_text.splitlines()[3])
+
+    def test_firefox_extension_id_declared_in_launcher(self):
+        self.assertIn(FIREFOX_EXTENSION_ID, self.launcher_text)
+
+    def test_ollama_cmd_routes_firefox(self):
+        cmd_text = OLLAMA_CMD_PATH.read_text(encoding='ascii', errors='replace')
+        self.assertIn('firefox', cmd_text.lower())
+        self.assertIn(':firefox', cmd_text)
+        self.assertIn('Browser firefox', cmd_text)
+
+    def test_make_xpi_builds_zip_with_manifest_at_root(self):
+        with tempfile.TemporaryDirectory() as temp:
+            source = Path(temp) / 'dist'
+            (source / 'subdir').mkdir(parents=True)
+            (source / 'manifest.json').write_text('{"name": "test"}')
+            (source / 'subdir' / 'nested.js').write_text('// nested')
+            destination = Path(temp) / 'out' / 'deep' / 'addon.xpi'
+            completed = subprocess.run(
+                [sys.executable, str(MAKE_XPI_PATH),
+                 str(source), str(destination)],
+                capture_output=True, text=True)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertTrue(destination.is_file())
+            with zipfile.ZipFile(destination) as archive:
+                names = archive.namelist()
+            self.assertIn('manifest.json', names)
+            self.assertIn('subdir/nested.js', names)
+            self.assertFalse(any('\\' in name for name in names))
 
 
 if __name__ == '__main__':
