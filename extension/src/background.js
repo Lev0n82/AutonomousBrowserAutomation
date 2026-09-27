@@ -30,6 +30,31 @@ async function getConfig() {
   return config;
 }
 
+// Seed chrome.storage.local from the packaged runtime-config.json so the
+// side panel and options page pair automatically when the launcher manages
+// the config. Only fills an empty token; never overrides manual settings.
+async function seedConfig() {
+  const saved = await chrome.storage.local.get(DEFAULT_CONFIG);
+  if (saved.token) return;
+  try {
+    const response = await fetch(chrome.runtime.getURL("runtime-config.json"), {
+      cache: "no-store"
+    });
+    if (!response.ok) return;
+    const managed = await response.json();
+    if (!managed.token) return;
+    await chrome.storage.local.set({
+      bridgeUrl: String(
+        managed.bridgeUrl || saved.bridgeUrl || DEFAULT_CONFIG.bridgeUrl
+      ).replace(/\/+$/, ""),
+      token: String(managed.token)
+    });
+    config = null;
+  } catch {
+    // runtime-config.json is optional when the extension is used without the launcher.
+  }
+}
+
 async function bridgeFetch(path, options = {}) {
   const current = await getConfig();
   if (!current.token) {
@@ -491,6 +516,35 @@ async function computerBatch(request) {
   };
 }
 
+async function evaluateJs(request) {
+  const tab = await activeTab(request.tab_id);
+  const code = String(request.code ?? "");
+  if (!code.trim()) {
+    throw new Error("EvaluateJS requires a code expression to evaluate.");
+  }
+  const value = await executeInTab(tab.id, (expression) => {
+    let result;
+    try {
+      result = new Function(`return (${expression})`)();
+    } catch (parseError) {
+      if (!(parseError instanceof SyntaxError)) throw parseError;
+      result = new Function(expression)();
+    }
+    if (result instanceof Node) return String(result.outerHTML || result.nodeName);
+    if (typeof result === "function") return String(result);
+    if (result === undefined) return null;
+    return JSON.parse(JSON.stringify(result));
+  }, [code]);
+  return {
+    tab_context: await tabContext(tab.id),
+    result: value === undefined ? null : value
+  };
+}
+
+async function tabsList() {
+  return { tab_context: await tabContext(-1) };
+}
+
 async function executeCommand(command) {
   switch (command.method) {
     case "ReadPage":
@@ -508,6 +562,10 @@ async function executeCommand(command) {
         ...(command.arguments || {}),
         allow_sensitive: command.allow_sensitive
       });
+    case "TabsList":
+      return tabsList();
+    case "EvaluateJS":
+      return evaluateJs(command.arguments || {});
     default:
       throw new Error(`Unsupported browser method: ${command.method}`);
   }
@@ -567,10 +625,13 @@ chrome.storage.onChanged.addListener((_changes, areaName) => {
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.alarms.create("keep-browser-control-active", { periodInMinutes: 0.5 });
-  if (chrome.sidePanel?.setPanelBehavior) {
-    chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(console.warn);
-  }
 });
+
+// MV3 service workers are ephemeral; setPanelBehavior is not persisted across
+// worker restarts, so it must run on every startup, not only onInstalled.
+if (chrome.sidePanel?.setPanelBehavior) {
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(console.warn);
+}
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === "keep-browser-control-active") poll();
@@ -580,4 +641,13 @@ if (chrome.action?.onClicked && chrome.sidebarAction?.open) {
   chrome.action.onClicked.addListener(() => chrome.sidebarAction.open());
 }
 
-poll();
+// Chromium fallback: fires only when openPanelOnActionClick is not active.
+if (chrome.action?.onClicked && chrome.sidePanel?.open) {
+  chrome.action.onClicked.addListener((tab) => {
+    chrome.sidePanel.open({ windowId: tab.windowId });
+  });
+}
+
+seedConfig()
+  .catch(() => {})
+  .then(() => poll());

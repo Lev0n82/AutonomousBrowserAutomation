@@ -57,7 +57,8 @@
 <table>
   <tr>
     <td align="center"><strong>4</strong><br><sub>browser experiences</sub></td>
-    <td align="center"><strong>6</strong><br><sub>model tool families</sub></td>
+    <td align="center"><strong>6</strong><br><sub>browser tool families</sub></td>
+    <td align="center"><strong>5</strong><br><sub>Azure Vault tools</sub></td>
     <td align="center"><strong>11</strong><br><sub>interaction primitives</sub></td>
     <td align="center"><strong>2</strong><br><sub>Ollama runtimes</sub></td>
     <td align="center"><strong>∞</strong><br><sub>steps until cancel</sub></td>
@@ -74,7 +75,8 @@
 
 ### What it can operate
 
-`Navigate` · `ReadPage` · `GetPageText` · `TabsCreate` · `FormInput` ·
+`Navigate` · `ReadPage` · `GetPageText` · `TabsCreate` · `TabsList` ·
+`EvaluateJS` · `FormInput` ·
 `Click` · `Right-click` · `Double-click` · `Type` · `Press keys` · `Scroll` ·
 `Drag` · `Screenshot` · `Wait`
 
@@ -149,11 +151,21 @@ differently.
 - Pasted or uploaded image inputs for vision-capable models
 - Local PDF, DOCX, and XLSX text extraction
 - Visible tab navigation and new-tab creation
+- Tab listing (`TabsList`) and sandboxed JavaScript evaluation in the active
+  page (`EvaluateJS`) for advanced page introspection
+- Optional agent screenshot vision: recent screenshots can be attached to the
+  model conversation (`enable_vision`: `auto`, `true`, or `false`)
 - Semantic page reading with stable element references
 - Form input, click, double-click, right-click, typing, keys, scrolling, drag,
   screenshot, and wait actions
 - Context compaction and screenshot omission to prevent model-context overflow
 - Windows DPAPI protection for the Ollama Cloud API key
+- Optional Azure Key Vault integration: credential lookup by email, safety-gated
+  browser sign-in into OPS-BPS Secure and EntraID protected sites, and a
+  supervised password-reset flow with Graph OTP retrieval and vault sync
+- Optional Azure DevOps QA integration: discover Excel test cases across project
+  repositories, inspect workbooks, execute GRACE tests, and publish results to
+  Azure Test Plans
 
 ## Architecture
 
@@ -359,7 +371,144 @@ the form until I explicitly confirm.
 | `GetPageText` | Extract readable page text |
 | `FormInput` | Set text, select, checkbox, or radio values |
 | `TabsCreate` | Create and activate a tab |
+| `TabsList` | List open tabs with titles, URLs, and tab IDs |
+| `EvaluateJS` | Evaluate a JavaScript snippet in the active page and return the JSON result |
 | `ComputerBatch` | Click, type, press keys, scroll, drag, wait, or screenshot |
+
+## Azure Key Vault integration (optional)
+
+When configured, the agent can retrieve credentials from an Azure Key Vault,
+sign in to OPS-BPS Secure or EntraID protected sites, and rotate expired
+passwords. Secrets are only returned masked (`abc***`) unless the user
+explicitly allows sensitive data in the message.
+
+### Configuration
+
+Keys are stored in `%LOCALAPPDATA%\OllamaComet\config.json` (or entered through
+`ollama launch <browser> --config`). All keys are optional; vault tools are
+disabled until `vault_uri` and `vault_name` are both set.
+
+| Key | Purpose |
+|---|---|
+| `vault_uri` | Key Vault URI, e.g. `https://qa-dev-app.vault.azure.net` |
+| `vault_name` | Vault name, e.g. `qa-dev-app` |
+| `vault_api_port` | Local companion app API port (default `8080`; `0` forces direct Azure REST access) |
+| `vault_api_key_secret_uri` | Companion API key secret URI |
+| `vault_api_key` | Static companion API key (overrides the secret URI) |
+| `keychain_dev_uri` / `keychain_qa_uri` | Dev/QA keychain secret URIs |
+| `azure_tenant_id` / `azure_client_id` | Azure AD app used for direct vault access |
+| `graph_tenant_id` / `graph_client_id` | Microsoft Graph app used for OTP mailbox access |
+| `reset_email` | Mailbox that receives password-reset OTP codes |
+
+### Vault tools
+
+| Tool | Purpose | Gating |
+|---|---|---|
+| `VaultConnect` | Verify connectivity (companion health check or device-code sign-in) | None |
+| `VaultListCredentials` | List vault accounts grouped by email with category and password presence | None |
+| `VaultGetCredential` | Look up the password for an email; masked unless reveal is allowed | Masked by default |
+| `VaultLogin` | Navigate to a site, locate the credential fields, and sign in with the vault password | Requires sensitive actions allowed |
+| `VaultResetPassword` | Rotate a live password and sync the new value back to the vault | Requires sensitive actions allowed **and** `confirm=true` |
+
+### Password-reset flow
+
+When a login is rejected because the password is expired or incorrect:
+
+1. The agent proposes `VaultResetPassword` and asks the user to confirm.
+2. A forgot-password request is sent to the OPS-BPS Secure endpoint.
+3. The OTP code is read from the reset mailbox through Microsoft Graph.
+4. A strong 17-character password is generated and submitted to the reset endpoint.
+5. The new password is written back to the vault as
+   `<email>---password`; the agent only ever displays a masked hint.
+
+### Secret naming
+
+Credentials are stored as one secret per account: the email is lowercased with
+`_` → `---`, `@` → `--`, and `.` → `-` (e.g. `jane_doe@oag.on.ca` becomes
+`jane---doe--oag-on-ca`), and the password secret gains a `---password` suffix.
+Account domains classify as `EntraID` (`ontario.ca`, `gov.on.ca`, `oag.on.ca`)
+or `OPS-BPS-Secure` (everything else).
+
+## Azure DevOps QA integration (optional)
+
+When configured, the agent can access Azure DevOps projects, locate Excel-format
+test case files stored across git repositories, inspect them, execute GRACE
+tests, and publish test results into Azure Test Plans runs.
+
+### Configuration
+
+All keys are set in `%LOCALAPPDATA%\OllamaComet\config.json` (via
+`ollama launch <browser> --config`). The ADO tools are disabled until `ado_org`
+and `ado_pat` are both set.
+
+| Key | Purpose |
+|---|---|
+| `ado_org` | Azure DevOps organization URL or name |
+| `ado_pat` | Personal access token (Work Items, Test Management, Code scopes) |
+| `ado_project` | Optional default project name; tools also accept a `project` argument |
+| `ado_grace_api` | Optional GRACE API base URL for `AdoRunGraceTest` |
+| `ado_grace_token` | Optional GRACE API bearer token |
+
+### ADO tools
+
+| Tool | Purpose | Gating |
+|---|---|---|
+| `AdoConnect` | Validate the connection and list accessible projects | None |
+| `AdoListRepositories` | List git repositories in a project | None |
+| `AdoFindTestFiles` | Search a repository for `.xlsx` test files | None |
+| `AdoInspectTestFile` | Peek inside a workbook: sheets, preview strings, GRACE-likeness | None |
+| `AdoListTestPlans` | List test plans | None |
+| `AdoListSuites` | List suites under a plan | None |
+| `AdoListTestPoints` | List test points under a suite | None |
+| `AdoListTestRuns` | List recent test runs (including GRACE self-reported runs) | None |
+| `AdoRunGraceTest` | Send an Excel workbook to the GRACE API for execution | Requires `confirm=true` |
+| `AdoPublishTestRun` | Publish xlsx test results to a test run in Azure Test Plans | Requires `confirm=true` |
+
+Results rows are read from the workbook's test-result sheets and posted to the
+run. PATs are never displayed in tool output; `AdoConnect` returns only a masked
+confirmation.
+
+## Launchpad: 1-click environment launch (optional)
+
+The sidecar gets a 🚀 Launchpad strip that maps friendly names ("PR1
+Production", "QA Stack") to a URL plus the account email used there. One click
+queues a confirmed sign-in task: the agent opens the environment, fills the
+login form with that account's vault credential, submits, and classifies the
+resulting page.
+
+### Tools
+
+| Tool | Purpose | Gating |
+|---|---|---|
+| `ListEnvironments` | List configured launchpad environments | None |
+| `LaunchEnvironment` | Open an environment and sign in with its vault credential | Requires `confirm=true` and sensitive-action approval |
+
+### Configuration
+
+Environments are managed in the sidecar (🚀 Launchpad → **Manage**): add a
+name, URL, and account email; or edit the `environments` key in
+`%LOCALAPPDATA%\OllamaComet\config.json` as
+`{"Name": {"url": "...", "account": "..."}}`.
+
+### Launch outcomes
+
+| Status | Meaning |
+|---|---|
+| `preview` | The launch plan without side effects (when `confirm` is false) |
+| `approval_required` | Sensitive actions were not approved for this task |
+| `signed_in` | Sign-in submitted and no challenge or login form detected |
+| `mfa_required` | MFA/verification page detected — control hands back to the user |
+| `captcha_detected` | CAPTCHA/human-verification page detected — hands back to the user |
+| `login_form_still_present` | Login form still on the page after submit — verify manually |
+| `password_expired` | Credential rejected — the agent offers `VaultResetPassword` |
+
+MFA and CAPTCHA always stop automation and hand control back to the user. A
+rejected vault password (expired or incorrect) is reported as
+`password_expired`; for OPS-BPS-Secure accounts the agent can then run
+`VaultResetPassword` to reset via OPS-BPS-Secure, read the PIN, change the
+password through the Graph mailbox, and sync the new secret back to the vault.
+The vault must be configured (see the Key Vault section above) before any
+launch can sign in.
 
 ## Attachments
 
@@ -383,6 +532,11 @@ content is transmitted to Ollama Cloud for inference.
 - Runtime tokens, cloud keys, profiles, logs, and configuration are excluded
   from source control.
 - Sensitive actions require explicit user confirmation.
+- Vault passwords are masked in tool output unless the user explicitly allows
+  sensitive data; `VaultLogin` and `VaultResetPassword` additionally require
+  approval, and password rotation requires `confirm=true`.
+- Vault OAuth tokens are cached only in the user profile and are never exposed
+  to browser JavaScript or the model context.
 - CAPTCHA and anti-bot challenges are not bypassed.
 
 The extension reads page content because that is its primary function. Firefox
@@ -412,11 +566,15 @@ extension/
   src/             Shared background action engine and panel UI
 ollama-comet/
   bridge.py        Ollama proxy, assistant UI, agent loop, and browser broker
+  vault.py         Azure Key Vault credential and password-reset tools
+  ado.py           Azure DevOps QA tools (repos, xlsx test files, GRACE, test runs)
   ollama.cmd       Ollama command wrapper
   Launch-*.ps1     Browser launchers
   Install-*.ps1    Windows installer
 tests/
   test_bridge_routing.py
+  test_vault_tools.py
+  test_ado_tools.py
 ```
 
 ## Known limitations
@@ -429,6 +587,10 @@ tests/
 - Model reliability depends on tool-calling quality and available context.
 - The Comet native protocol is proprietary and may change between versions.
 - Scanned PDFs require OCR before upload.
+- Vault secret-name encoding is lossy for emails containing both `_` and `.`;
+  prefer account emails without underscores in the local part.
+- Without the local companion app, vault access uses the Azure device-code
+  flow, which requires an interactive browser sign-in the first time.
 
 ## Contributing
 

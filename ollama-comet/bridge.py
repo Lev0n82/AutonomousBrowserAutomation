@@ -1,11 +1,13 @@
 import argparse
 import base64
 import hashlib
+import importlib.util
 import io
 import json
 import os
 import pathlib
 import queue
+import re
 import secrets
 import struct
 import sys
@@ -35,6 +37,26 @@ def load_config():
         "cloud_endpoint": "https://ollama.com",
         "local_model": "granite4.1:3b",
         "cloud_model": "",
+        "chat_timeout": 600,
+        "enable_vision": "auto",
+        "vault_uri": "",
+        "vault_name": "",
+        "vault_api_port": 8080,
+        "vault_api_key": "",
+        "vault_api_key_secret_uri": "",
+        "azure_tenant_id": "",
+        "azure_client_id": "",
+        "graph_tenant_id": "",
+        "graph_client_id": "",
+        "keychain_dev_uri": "",
+        "keychain_qa_uri": "",
+        "reset_email": "",
+        "ado_org": "",
+        "ado_project": "",
+        "ado_pat": "",
+        "ado_grace_api": "",
+        "ado_grace_token": "",
+        "environments": {},
     }
     if CONFIG_PATH.exists():
         try:
@@ -59,6 +81,13 @@ def load_config():
 def save_config(config):
     APP_DIR.mkdir(parents=True, exist_ok=True)
     CONFIG_PATH.write_text(json.dumps(config, indent=2), encoding="utf-8")
+
+
+def chat_timeout(config):
+    try:
+        return max(30, int(config.get("chat_timeout") or 600))
+    except (TypeError, ValueError):
+        return 600
 
 
 def normalize_endpoint(endpoint):
@@ -162,6 +191,36 @@ BROWSER_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "TabsList",
+            "description": "List the open tabs in the active browser window.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "EvaluateJS",
+            "description": (
+                "Evaluate a JavaScript expression in the page and return its value as "
+                "JSON. For read-only page state checks; do not use it to bypass the "
+                "side-effect confirmation policy."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tab_id": {"type": "integer"},
+                    "expression": {"type": "string"},
+                },
+                "required": ["expression"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "ComputerBatch",
             "description": (
                 "Run Comet-style browser actions. Supported action values: SCREENSHOT, WAIT, "
@@ -202,26 +261,418 @@ BROWSER_TOOLS = [
     },
 ]
 
+VAULT_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "VaultConnect",
+            "description": (
+                "Test and establish the Key Vault connection. Uses the Azure Secret "
+                "Manager companion app when it is running, otherwise the direct "
+                "Azure Key Vault device-code flow. Call again after the user signs "
+                "in at microsoft.com/devicelogin to finish a pending connection."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "VaultListCredentials",
+            "description": (
+                "List the credential emails stored in the vault, grouped by "
+                "category (OPS-BPS-Secure or EntraID)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "category": {
+                        "type": "string",
+                        "enum": ["all", "OPS-BPS-Secure", "EntraID"],
+                        "description": "Filter the listing. Defaults to all.",
+                    }
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "VaultGetCredential",
+            "description": (
+                "Look up the stored password for an email account. Passwords stay "
+                "masked unless the user explicitly asked to reveal them."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "email": {"type": "string"},
+                    "reveal": {
+                        "type": "boolean",
+                        "description": (
+                            "Set true only when the user explicitly asked to see "
+                            "the password."
+                        ),
+                    },
+                },
+                "required": ["email"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "VaultLogin",
+            "description": (
+                "Log into a site using the stored password for an email account. "
+                "The password is never returned. Requires explicit user "
+                "confirmation, and 'submit': true is required to actually submit "
+                "the login form."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string"},
+                    "email": {"type": "string"},
+                    "submit": {
+                        "type": "boolean",
+                        "description": "Set true to submit the login form.",
+                    },
+                },
+                "required": ["url", "email"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "VaultResetPassword",
+            "description": (
+                "Run the OPS-BPS secure password reset for an email account: "
+                "request the reset, read the OTP from the reset mailbox, set a "
+                "new password, and sync it to the vault. Requires explicit user "
+                "confirmation and 'confirm': true."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "email": {"type": "string"},
+                    "confirm": {
+                        "type": "boolean",
+                        "description": "Set true to actually perform the reset.",
+                    },
+                },
+                "required": ["email", "confirm"],
+            },
+        },
+    },
+]
+
+ADO_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "AdoConnect",
+            "description": "Validate the Azure DevOps connection and list accessible projects. Requires ado_org and ado_pat in settings.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "AdoListRepositories",
+            "description": "List git repositories in an Azure DevOps project.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project": {"type": "string", "description": "Project name; defaults to the configured ado_project."},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "AdoFindTestFiles",
+            "description": "Locate Excel (.xlsx) test-case workbooks checked into Azure DevOps git repositories.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project": {"type": "string"},
+                    "repo": {"type": "string", "description": "Restrict the search to one repository."},
+                    "limit": {"type": "integer", "description": "Maximum files to return (default 25, max 100)."},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "AdoInspectTestFile",
+            "description": "Peek inside an .xlsx workbook from a repository: sheet names, preview strings, and whether it looks like a GRACE test.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string"},
+                    "path": {"type": "string", "description": "Full repository path of the workbook."},
+                    "project": {"type": "string"},
+                },
+                "required": ["repo", "path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "AdoListTestPlans",
+            "description": "List Azure Test Plans in a project.",
+            "parameters": {
+                "type": "object",
+                "properties": {"project": {"type": "string"}},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "AdoListSuites",
+            "description": "List test suites inside an Azure Test Plan.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "plan_id": {"type": "integer"},
+                    "project": {"type": "string"},
+                },
+                "required": ["plan_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "AdoListTestPoints",
+            "description": "List test points inside a test suite, with their outcomes.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "plan_id": {"type": "integer"},
+                    "suite_id": {"type": "integer"},
+                    "outcome": {"type": "string", "description": "Filter by outcome, e.g. Passed or NotExecuted."},
+                    "project": {"type": "string"},
+                },
+                "required": ["plan_id", "suite_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "AdoListTestRuns",
+            "description": "List recent Azure Test Plans runs (also used to observe GRACE self-reported outcomes).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project": {"type": "string"},
+                    "top": {"type": "integer", "description": "Maximum runs to return (default 25)."},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "AdoRunGraceTest",
+            "description": "Send an Excel test workbook to the GRACE API for execution. GRACE reports outcomes to Azure Test Plans itself. Requires confirm=true.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "Repository of the workbook (with path), or use local_path."},
+                    "path": {"type": "string", "description": "Repository path of the .xlsx workbook."},
+                    "local_path": {"type": "string", "description": "Optional local workbook path instead of repo/path."},
+                    "env": {"type": "string", "description": "Target environment key, e.g. EDCS-9."},
+                    "browser": {"type": "string", "description": "Browser to run with, e.g. chrome or edge."},
+                    "browser_version": {"type": "string"},
+                    "confirm": {"type": "boolean", "description": "Set true to actually execute the test."},
+                },
+                "required": ["env", "browser", "confirm"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "AdoPublishTestRun",
+            "description": "Create an Azure Test Plans run, publish per-test-point outcomes and close the run. Requires confirm=true.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "plan_id": {"type": "integer"},
+                    "point_ids": {"type": "array", "items": {"type": "integer"}, "description": "Test point ids included in the run."},
+                    "results": {
+                        "type": "array",
+                        "description": "One entry per test point: {point_id, outcome, comment?, duration_ms?, error?}.",
+                        "items": {"type": "object"},
+                    },
+                    "name": {"type": "string", "description": "Run name; defaults to a GRACE automated run."},
+                    "project": {"type": "string"},
+                    "confirm": {"type": "boolean", "description": "Set true to actually publish."},
+                },
+                "required": ["plan_id", "point_ids", "results", "confirm"],
+            },
+        },
+    },
+]
+
+_ADO_MODULE = {"value": None}
+
+
+def load_ado_module():
+    if _ADO_MODULE["value"] is not None:
+        return _ADO_MODULE["value"]
+    ado_path = pathlib.Path(__file__).resolve().parent / "ado.py"
+    spec = importlib.util.spec_from_file_location("autonomous_browser_ado", ado_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    _ADO_MODULE["value"] = module
+    return module
+
+
+def ado_configured(config):
+    return bool(str(config.get("ado_org", "")).strip()) and bool(
+        str(config.get("ado_pat", "")).strip()
+    )
+
+_VAULT_MODULE = {"value": None}
+
+
+def load_vault_module():
+    if _VAULT_MODULE["value"] is not None:
+        return _VAULT_MODULE["value"]
+    vault_path = pathlib.Path(__file__).resolve().parent / "vault.py"
+    spec = importlib.util.spec_from_file_location(
+        "autonomous_browser_vault", vault_path
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    _VAULT_MODULE["value"] = module
+    return module
+
+
+def vault_configured(config):
+    return bool(str(config.get("vault_uri", "")).strip()) and bool(
+        str(config.get("vault_name", "")).strip()
+    )
+
+
+LAUNCHPAD_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "ListEnvironments",
+            "description": (
+                "List launchpad environments configured for 1-click launch "
+                "(name, url, account)."
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "LaunchEnvironment",
+            "description": (
+                "Open a configured launchpad environment and sign in with its "
+                "vault credential. Reports signed_in, mfa_required, "
+                "captcha_detected, password_expired, or login_form_still_present."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Configured environment name."},
+                    "confirm": {
+                        "type": "boolean",
+                        "description": "Set true to actually open the environment and sign in.",
+                    },
+                },
+                "required": ["name"],
+            },
+        },
+    },
+]
+
+_LAUNCHPAD_MODULE = {"value": None}
+
+
+def load_launchpad_module():
+    if _LAUNCHPAD_MODULE["value"] is not None:
+        return _LAUNCHPAD_MODULE["value"]
+    launchpad_path = pathlib.Path(__file__).resolve().parent / "launchpad.py"
+    spec = importlib.util.spec_from_file_location(
+        "autonomous_browser_launchpad", launchpad_path
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    _LAUNCHPAD_MODULE["value"] = module
+    return module
+
 AGENT_SYSTEM_PROMPT = """You are the Ollama browser assistant embedded in Perplexity Comet.
-Use the signed Comet Agent extension through only these native RPC methods:
-Navigate, ReadPage, GetPageText, FormInput, TabsCreate, and ComputerBatch.
-ComputerBatch action objects use the native action values SCREENSHOT, WAIT, LEFT_CLICK,
-RIGHT_CLICK, DOUBLE_CLICK, TRIPLE_CLICK, TYPE, KEY, SCROLL, LEFT_CLICK_DRAG, and SCROLL_TO.
+Use the browser extension through only these tools:
+Navigate, ReadPage, GetPageText, FormInput, TabsCreate, TabsList, EvaluateJS, and ComputerBatch.
+Vault tools may also be available when a Key Vault is connected: VaultConnect,
+VaultListCredentials, VaultGetCredential, VaultLogin, and VaultResetPassword.
+ADO tools may also be available when Azure DevOps is configured: AdoConnect,
+AdoListRepositories, AdoFindTestFiles, AdoInspectTestFile, AdoListTestPlans,
+AdoListSuites, AdoListTestPoints, AdoListTestRuns, AdoRunGraceTest, and
+AdoPublishTestRun. AdoRunGraceTest and AdoPublishTestRun need confirm=true.
+Launchpad tools are also available: ListEnvironments and LaunchEnvironment.
+LaunchEnvironment opens a configured environment (a saved url + account pair,
+for example PR1 Production or QA Stack), signs in with the vault credential for
+that account, and reports one of signed_in, mfa_required, captcha_detected,
+password_expired, login_form_still_present, or preview. Set confirm=true only
+after the user explicitly asks to launch that environment; the bridge requires
+sensitive approval as well. When the launch reports mfa_required or
+captcha_detected, hand control back to the user to finish the challenge. When
+it reports password_expired, offer VaultResetPassword.
+ComputerBatch action objects use the action values SCREENSHOT, WAIT, LEFT_CLICK, RIGHT_CLICK,
+DOUBLE_CLICK, TRIPLE_CLICK, TYPE, KEY, SCROLL, LEFT_CLICK_DRAG, and SCROLL_TO.
 Use the exact JSON schemas supplied with the tools; never invent a method or parameter.
-Use these tools to complete the user's task in the active main Comet browser section while the
+Use these tools to complete the user's task in the active main browser section while the
 conversation remains in the assistant section.
 Always inspect a page with ReadPage before clicking or entering values. Prefer element references
-over coordinates. Keep the user informed in the final answer, but do not invent results.
+over coordinates. Use TabsList to discover other open tabs before switching, and use EvaluateJS
+only to read page state or compute values, never to bypass the confirmation rules. When a
+SCREENSHOT action succeeds, the captured image is attached to the tool result automatically.
+Keep the user informed in the final answer, but do not invent results.
 When the user requests the main window or current tab, reuse it with Navigate instead of creating
 a background tab. Browser targets are brought to the foreground; do not claim navigation unless
 the corresponding browser tool returned successfully.
 Do not repeat an identical tool call when the page state has not changed. After completing the
 requested browser action, stop calling tools and provide the final answer immediately.
-Navigation, reading, scrolling, and harmless form preparation are allowed automatically.
-Do not submit forms, send messages, purchase anything, delete content, download files, enter
-credentials, or change account state unless the user's latest request explicitly confirms that
-specific side effect. If confirmation is missing, stop before the side effect and ask for it.
-Internal browser pages and restricted URLs may not be controllable."""
+
+Side-effect policy:
+- Navigation, reading, scrolling, screenshots, and harmless form preparation are allowed
+  automatically.
+- For every side effect (submitting a form, sending a message, purchasing, deleting content,
+  downloading files, entering credentials, signing in, changing account state) state exactly what
+  you are about to do and ask the user to confirm that specific action, for example: "I will
+  click Submit on this order form. Reply 'confirm submit' to proceed."
+- Proceed only when the user's latest message explicitly confirms that action; otherwise stop
+  before the side effect and ask for it.
+- Vault logins and password resets are additionally enforced by the bridge: VaultLogin needs
+  submit=true and VaultResetPassword needs confirm=true after explicit user confirmation.
+- Never display or repeat full passwords in your replies; vault credentials are masked.
+- CAPTCHA and human-verification pages cannot be solved; hand control back to the user.
+- Internal browser pages (chrome://, edge://, about:) and other restricted URLs may not be
+  controllable. If a tool fails there, tell the user which setting to change manually."""
 
 SENSITIVE_WORDS = {
     "confirm",
@@ -321,6 +772,82 @@ def compact_agent_messages(messages, max_characters=140000):
     if latest_user and latest_user not in compacted:
         compacted.append(latest_user)
     return compacted
+
+
+VISION_CAPABILITY_CACHE = {}
+_IMAGE_KEY_MARKERS = ("base64", "data_url", "screenshot", "image")
+
+
+def extract_images(value, key="", depth=0):
+    """Collect base64 image data from a raw tool result before compaction."""
+    if depth > 8:
+        return []
+    normalized_key = key.lower()
+    if any(marker in normalized_key for marker in _IMAGE_KEY_MARKERS):
+        if isinstance(value, str) and len(value) > 256:
+            data = value
+            prefix = re.match(r"^data:[^;]+;base64,", value)
+            if prefix:
+                data = value[prefix.end():]
+            return [data]
+    if isinstance(value, dict):
+        images = []
+        for child_key, child_value in value.items():
+            images.extend(extract_images(child_value, str(child_key), depth + 1))
+        return images
+    if isinstance(value, list):
+        images = []
+        for item in value[:100]:
+            images.extend(extract_images(item, key, depth + 1))
+        return images
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped[:1] in ("{", "[") and len(stripped) < 200000:
+            try:
+                return extract_images(json.loads(stripped), key, depth + 1)
+            except ValueError:
+                return []
+    return []
+
+
+def model_supports_vision(endpoint, model):
+    cache_key = (normalize_endpoint(str(endpoint)), str(model))
+    if cache_key in VISION_CAPABILITY_CACHE:
+        return VISION_CAPABILITY_CACHE[cache_key]
+    supported = False
+    try:
+        _, _, body = request_json(
+            target_url(endpoint, "/api/show"),
+            method="POST",
+            payload={"model": model},
+            timeout=30,
+        )
+        info = json.loads(body)
+        supported = "vision" in (info.get("capabilities") or [])
+        if not supported:
+            model_info_blob = json.dumps(info.get("model_info") or {}).lower()
+            supported = any(
+                marker in model_info_blob
+                for marker in ("vision", "mmproj", "clip-vit", "llava")
+            )
+    except (OSError, ValueError, KeyError):
+        supported = False
+    VISION_CAPABILITY_CACHE[cache_key] = supported
+    return supported
+
+
+def collect_tool_images(config, model, raw_result):
+    mode = str(config.get("enable_vision", "auto")).strip().lower()
+    if mode in {"false", "0", "no", "off", "disabled"}:
+        return []
+    images = extract_images(raw_result)
+    if not images:
+        return []
+    if mode == "true":
+        return images[:4]
+    if not model_supports_vision(config.get("endpoint", ""), model):
+        return []
+    return images[:4]
 
 
 def decode_attachment(attachment):
@@ -529,22 +1056,40 @@ class AgentTaskRegistry:
         self.lock = threading.Lock()
 
     def create(self, task_id):
-        cancel_event = threading.Event()
+        entry = {"cancel": threading.Event(), "events": []}
         with self.lock:
-            self.tasks[task_id] = cancel_event
-        return cancel_event
+            self.tasks[task_id] = entry
+        return entry["cancel"]
 
     def cancel(self, task_id):
         with self.lock:
-            cancel_event = self.tasks.get(task_id)
-        if not cancel_event:
+            entry = self.tasks.get(task_id)
+        if not entry:
             return False
-        cancel_event.set()
+        entry["cancel"].set()
         return True
 
     def remove(self, task_id):
         with self.lock:
             self.tasks.pop(task_id, None)
+
+    def log(self, task_id, event):
+        with self.lock:
+            entry = self.tasks.get(task_id)
+            if entry is not None:
+                entry["events"].append(event)
+
+    def progress(self, task_id, after=0):
+        with self.lock:
+            entry = self.tasks.get(task_id)
+            if entry is None:
+                return {"task_id": task_id, "active": False, "index": 0, "events": []}
+            return {
+                "task_id": task_id,
+                "active": True,
+                "index": len(entry["events"]),
+                "events": list(entry["events"][max(0, after):]),
+            }
 
 
 class NativeWebSocketConnection:
@@ -1341,6 +1886,16 @@ class CDPBrowserController:
             return self._form_input(target, arguments, allow_sensitive)
         if method == "ComputerBatch":
             return self._computer_batch(target, arguments, allow_sensitive)
+        if method == "TabsList":
+            return {"tab_context": self._context(None)}
+        if method == "EvaluateJS":
+            expression = arguments.get("expression")
+            if not isinstance(expression, str) or not expression.strip():
+                raise ValueError("expression is required")
+            return {
+                "tab_context": self._context(target),
+                "result": self._evaluate(target, expression),
+            }
         raise ValueError(f"Unsupported browser method: {method}")
 
 
@@ -1388,6 +1943,29 @@ def run_agent(server, payload):
     allow_sensitive = sensitive_allowed(messages)
     trace = []
     tool_names = {tool["function"]["name"] for tool in BROWSER_TOOLS}
+    chat_tools = list(BROWSER_TOOLS)
+    if vault_configured(config):
+        vault_tool_names = {tool["function"]["name"] for tool in VAULT_TOOLS}
+        tool_names |= vault_tool_names
+        chat_tools = chat_tools + list(VAULT_TOOLS)
+
+        def vault_executor(method, arguments, sensitive):
+            if use_browser_extension:
+                return compact_tool_result(
+                    server.browser_broker.execute(method, arguments, sensitive)
+                )
+            return compact_tool_result(native_session.rpc(method, arguments))
+    else:
+        vault_tool_names = set()
+    if ado_configured(config):
+        ado_tool_names = {tool["function"]["name"] for tool in ADO_TOOLS}
+        tool_names |= ado_tool_names
+        chat_tools = chat_tools + list(ADO_TOOLS)
+    else:
+        ado_tool_names = set()
+    launchpad_tool_names = {tool["function"]["name"] for tool in LAUNCHPAD_TOOLS}
+    tool_names |= launchpad_tool_names
+    chat_tools = chat_tools + list(LAUNCHPAD_TOOLS)
     task_id = str(payload.get("task_id") or uuid.uuid4())
     cancel_event = server.agent_tasks.create(task_id)
     use_browser_extension = should_use_browser_extension(server)
@@ -1405,6 +1983,9 @@ def run_agent(server, payload):
         ),
         "",
     )
+
+    def log_progress(event):
+        server.agent_tasks.log(task_id, event)
 
     def cancelled_response():
         if native_session:
@@ -1462,25 +2043,59 @@ def run_agent(server, payload):
                     ),
                 }
             )
+        chat_timeout_seconds = chat_timeout(config)
+        round_number = 0
         while True:
             if cancel_event.is_set():
                 return cancelled_response()
             messages = compact_agent_messages(messages)
-            _, _, response_body = request_json(
-                target_url(config["endpoint"], "/api/chat"),
-                method="POST",
-                payload={
-                    "model": model,
-                    "messages": messages,
-                    "tools": BROWSER_TOOLS,
-                    "stream": False,
-                },
-                api_key=server.api_key,
-            )
+            round_number += 1
+            log_progress({"type": "phase", "text": f"Thinking (round {round_number})"})
+            # With stream=False the model can stay silent for minutes while
+            # loading or planning; retry once so a slow local model does not
+            # abort the whole task.
+            for attempt in range(2):
+                try:
+                    _, _, response_body = request_json(
+                        target_url(config["endpoint"], "/api/chat"),
+                        method="POST",
+                        payload={
+                            "model": model,
+                            "messages": messages,
+                            "tools": chat_tools,
+                            "stream": False,
+                        },
+                        api_key=server.api_key,
+                        timeout=chat_timeout_seconds,
+                    )
+                    break
+                except TimeoutError:
+                    if attempt:
+                        raise RuntimeError(
+                            "Ollama did not respond within "
+                            f"{chat_timeout_seconds} seconds. Raise "
+                            "'chat_timeout' in config.json or pick a faster "
+                            "model."
+                        ) from None
             if cancel_event.is_set():
                 return cancelled_response()
             response = json.loads(response_body)
             assistant = response.get("message") or {}
+            content_text = str(assistant.get("content") or "")
+            thinking_text = (
+                assistant.get("thinking") or assistant.get("reasoning") or ""
+            )
+            inline_match = re.search(
+                r"<think(?:ing)?>([\s\S]*?)</think(?:ing)?>",
+                content_text,
+                re.IGNORECASE,
+            )
+            if inline_match:
+                thinking_text = thinking_text or inline_match.group(1)
+            if str(thinking_text).strip():
+                log_progress(
+                    {"type": "thinking", "text": str(thinking_text).strip()[:600]}
+                )
             messages.append(assistant)
             tool_calls = assistant.get("tool_calls") or []
             if not tool_calls:
@@ -1501,8 +2116,54 @@ def run_agent(server, payload):
                 arguments = function.get("arguments") or {}
                 if isinstance(arguments, str):
                     arguments = json.loads(arguments)
+                log_progress(
+                    {
+                        "type": "tool",
+                        "tool": name or "unknown",
+                        "detail": json.dumps(arguments)[:140],
+                    }
+                )
                 if name not in tool_names:
                     result = {"error": f"Unsupported browser tool: {name}"}
+                    raw_result = None
+                elif name in vault_tool_names:
+                    try:
+                        raw_result = load_vault_module().dispatch_tool(
+                            name,
+                            arguments,
+                            config,
+                            allow_sensitive,
+                            vault_executor,
+                        )
+                    except (RuntimeError, TimeoutError, ValueError) as error:
+                        raw_result = {"error": str(error)}
+                    result = compact_tool_result(raw_result)
+                elif name in ado_tool_names:
+                    try:
+                        raw_result = load_ado_module().dispatch_tool(
+                            name,
+                            arguments,
+                            config,
+                            allow_sensitive,
+                            None,
+                        )
+                    except (RuntimeError, TimeoutError, ValueError) as error:
+                        raw_result = {"error": str(error)}
+                    result = compact_tool_result(raw_result)
+                elif name in launchpad_tool_names:
+                    vault_ready = vault_configured(config)
+                    try:
+                        raw_result = load_launchpad_module().dispatch_tool(
+                            name,
+                            arguments,
+                            config,
+                            allow_sensitive,
+                            vault_executor if vault_ready else None,
+                            load_vault_module() if vault_ready else None,
+                        )
+                    except (RuntimeError, TimeoutError, ValueError) as error:
+                        raw_result = {"error": str(error)}
+                    result = compact_tool_result(raw_result)
                 else:
                     try:
                         if not allow_sensitive and name == "FormInput":
@@ -1525,21 +2186,29 @@ def run_agent(server, payload):
                             else native_session.rpc
                         )
                         if use_browser_extension:
-                            result = compact_tool_result(
-                                executor(name, arguments, allow_sensitive)
-                            )
+                            raw_result = executor(name, arguments, allow_sensitive)
                         else:
-                            result = compact_tool_result(executor(name, arguments))
+                            raw_result = executor(name, arguments)
                     except (RuntimeError, TimeoutError, ValueError) as error:
-                        result = {"error": str(error)}
-                trace.append({"tool": name, "arguments": arguments, "result": result})
-                messages.append(
+                        raw_result = {"error": str(error)}
+                    result = compact_tool_result(raw_result)
+                log_progress(
                     {
-                        "role": "tool",
-                        "tool_name": name,
-                        "content": json.dumps(result),
+                        "type": "tool_result",
+                        "tool": name or "unknown",
+                        "ok": isinstance(result, dict) and "error" not in result,
                     }
                 )
+                trace.append({"tool": name, "arguments": arguments, "result": result})
+                tool_message = {
+                    "role": "tool",
+                    "tool_name": name,
+                    "content": json.dumps(result),
+                }
+                images = collect_tool_images(config, model, raw_result)
+                if images:
+                    tool_message["images"] = images
+                messages.append(tool_message)
     finally:
         server.browser_controller.close_target(bootstrap_id)
         if native_session:
@@ -1752,6 +2421,112 @@ def html_page(token):
       textarea {{ min-height: 48px; max-height: 100px; }}
       .composer {{ padding: 7px; }}
     }}
+    #status.busy {{ color: #2563eb; }}
+    #status.busy::before {{
+      content: "";
+      display: inline-block;
+      width: 10px; height: 10px;
+      margin-right: 6px;
+      border: 2px solid #93c5fd;
+      border-top-color: #2563eb;
+      border-radius: 50%;
+      vertical-align: -1px;
+      animation: comet-spin 0.8s linear infinite;
+    }}
+    @keyframes comet-spin {{ to {{ transform: rotate(360deg); }} }}
+    .typing {{
+      display: flex; align-items: center; gap: 10px;
+      margin: 4px 24px 12px 0;
+      padding: 10px 14px;
+      background: #1f2733; border: 1px solid #374151;
+      border-radius: 10px; color: #e5e7eb;
+      width: fit-content; max-width: 90%;
+    }}
+    .typing .dots {{ display: inline-flex; gap: 4px; }}
+    .typing .dots span {{
+      width: 7px; height: 7px; border-radius: 50%;
+      background: #93c5fd; opacity: 0.7;
+      animation: comet-bounce 1.2s infinite;
+    }}
+    .typing .dots span:nth-child(2) {{ animation-delay: 0.15s; }}
+    .typing .dots span:nth-child(3) {{ animation-delay: 0.3s; }}
+    @keyframes comet-bounce {{
+      0%, 60%, 100% {{ transform: translateY(0); opacity: 0.5; }}
+      30% {{ transform: translateY(-4px); opacity: 1; }}
+    }}
+    .activity-label {{ color: #cbd5e1; font-size: 12px; }}
+    .activity-feed {{ margin: 6px 0 0 12px; color: #8b98a9; font-size: 11px; }}
+    .activity-feed div {{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 420px; }}
+    .thought-snippet {{ color: #94a3b8; font-style: italic; font-size: 12px; max-width: 520px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+    details.thoughts {{
+      margin-top: 8px; padding: 6px 10px;
+      border-left: 3px solid #4b5563; border-radius: 4px;
+      background: rgba(75, 85, 99, 0.18);
+      font-size: 12px; color: #cbd5e1; max-width: 640px;
+    }}
+    details.thoughts summary {{ cursor: pointer; color: #9ca3af; user-select: none; }}
+    details.thoughts .thoughts-body {{
+      margin-top: 6px; white-space: pre-wrap; word-break: break-word;
+      color: #d1d5db; font-size: 12px;
+    }}
+    .controls.collapsed {{ display: none; }}
+    .launchpad {{
+      margin-top: 8px; padding: 10px; border: 1px dashed #cdd7d4;
+      border-radius: 14px; background: rgba(247, 251, 250, 0.8);
+    }}
+    .launchpad-head {{ display: flex; align-items: center; justify-content: space-between; gap: 8px; }}
+    .launchpad-title {{ font-size: 13px; font-weight: 600; color: #33514c; }}
+    .launchpad-buttons {{ display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }}
+    .launchpad-buttons button {{ padding: 6px 12px; font-size: 13px; }}
+    .launchpad-buttons .empty-note {{ color: #5b6668; font-size: 12px; }}
+    .launchpad-editor {{ display: grid; gap: 6px; margin-top: 8px; }}
+    .launchpad-editor[hidden] {{ display: none; }}
+    .launchpad-editor input, .launchpad-editor select {{
+      padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px;
+    }}
+    .launchpad-editor-actions {{ display: flex; gap: 8px; flex-wrap: wrap; }}
+    .controls-toggle, .icon-button {{
+      width: 36px; height: 36px; padding: 0;
+      display: inline-flex; align-items: center; justify-content: center;
+    }}
+    .controls-toggle svg, .icon-button svg {{ width: 18px; height: 18px; }}
+    .controls-toggle[aria-pressed="true"] {{ border-color: #2563eb; color: #93c5fd; }}
+    .header-actions {{ display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }}
+    .run-stack {{
+      display: flex; flex-direction: column; gap: 6px; flex: 0 0 auto;
+    }}
+    #send {{
+      width: 36px; height: 36px; padding: 0;
+      display: inline-flex; align-items: center; justify-content: center;
+      border-radius: 10px;
+    }}
+    #send svg {{ width: 20px; height: 20px; }}
+    #send.executing {{
+      background: #dc2626; border-color: #b91c1c; color: #ffffff;
+      animation: stop-pulse 1.2s ease-in-out infinite;
+    }}
+    #send.executing:disabled {{ opacity: 0.7; cursor: progress; }}
+    @keyframes stop-pulse {{
+      0%, 100% {{ box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.55); }}
+      50% {{ box-shadow: 0 0 0 7px rgba(220, 38, 38, 0); }}
+    }}
+    .queue-panel {{
+      border: 1px solid var(--border); border-radius: 10px;
+      background: var(--teal-soft); padding: 6px 8px;
+    }}
+    .queue-title {{ font-size: 11px; color: var(--teal-dark); margin-bottom: 4px; }}
+    #queue-list {{
+      list-style: decimal; margin: 0; padding-left: 18px;
+      display: flex; flex-direction: column; gap: 4px;
+    }}
+    #queue-list li {{ display: flex; align-items: center; gap: 6px; font-size: 12px; }}
+    .queue-text {{
+      flex: 1 1 auto; min-width: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }}
+    #queue-list .queue-now {{ width: 26px; height: 26px; padding: 0; }}
+    #queue-list .queue-now svg {{ width: 14px; height: 14px; }}
   </style>
 </head>
 <body>
@@ -1761,9 +2536,23 @@ def html_page(token):
       <h1>Ollama QA Assistant</h1>
       <div class="subtle">Open WebUI-inspired chat with native Comet browser control</div>
     </div>
-    <button id="refresh" class="secondary">Refresh models</button>
+    <div class="header-actions">
+      <button id="settings-toggle" class="secondary controls-toggle" type="button"
+        aria-pressed="false" aria-controls="controls"
+        aria-label="Show model settings" title="Show model settings">
+        <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
+          <path d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.07-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.74,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.07,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.47-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z"/>
+        </svg>
+      </button>
+      <button id="refresh" class="secondary icon-button" type="button"
+        aria-label="Refresh models" title="Refresh models">
+        <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
+          <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+        </svg>
+      </button>
+    </div>
   </header>
-  <section class="controls">
+  <section class="controls" id="controls">
     <select id="provider" aria-label="Model provider">
       <option value="local">Local Ollama</option>
       <option value="cloud">Ollama Cloud</option>
@@ -1771,17 +2560,50 @@ def html_page(token):
     <select id="model" aria-label="Model"></select>
     <button id="save" class="secondary">Save</button>
   </section>
+  <section class="launchpad" id="launchpad">
+    <div class="launchpad-head">
+      <span class="launchpad-title">🚀 Launchpad</span>
+      <button id="launchpad-manage" class="secondary" type="button" title="Add, update, or remove launchpad environments">Manage</button>
+    </div>
+    <div id="launchpad-buttons" class="launchpad-buttons"></div>
+    <div id="launchpad-editor" class="launchpad-editor" hidden>
+      <input id="lp-name" placeholder="Environment name (e.g. PR1 Production)" aria-label="Environment name">
+      <input id="lp-url" placeholder="URL (https://...)" aria-label="Environment URL">
+      <input id="lp-account" placeholder="Account email (vault credential)" aria-label="Environment account">
+      <div class="launchpad-editor-actions">
+        <select id="lp-remove" aria-label="Environment to remove"><option value="">Remove…</option></select>
+        <button id="lp-remove-go" class="secondary" type="button">Remove</button>
+        <button id="lp-save" class="secondary" type="button">Add / Update</button>
+        <button id="lp-done" class="secondary" type="button">Done</button>
+      </div>
+    </div>
+  </section>
   <div id="status" class="subtle"></div>
   <section id="messages"></section>
   <section class="composer">
+    <div id="queue-panel" class="queue-panel" hidden>
+      <div class="queue-title">Queued - processed next</div>
+      <ol id="queue-list"></ol>
+    </div>
     <div id="attachments" class="attachments" aria-live="polite"></div>
     <textarea id="prompt" placeholder="Ask Ollama, paste an image or table, attach a document, or give it a browser task..."></textarea>
     <input id="image-input" type="file" accept="image/*,.pdf,.docx,.xlsx" multiple>
     <div class="actions">
       <button id="attach" class="secondary" type="button">Attach files</button>
       <button id="clear" class="secondary">Clear</button>
-      <button id="cancel" class="secondary" disabled>Cancel autonomous task</button>
-      <button id="send">Send</button>
+      <div class="run-stack">
+        <button id="send" type="button" title="Send and run task" aria-label="Send and run task">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M8 5v14l11-7z"/>
+          </svg>
+        </button>
+        <button id="queue" class="secondary icon-button" type="button" hidden
+          title="Queue message - runs after the current task" aria-label="Queue message">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M14 10H2v2h12v-2zm0-4H2v2h12V6zm4 8v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4z"/>
+          </svg>
+        </button>
+      </div>
     </div>
   </section>
 </main>
@@ -1794,11 +2616,143 @@ const model = document.getElementById("model");
 const status = document.getElementById("status");
 const messagesEl = document.getElementById("messages");
 const promptEl = document.getElementById("prompt");
-const cancelButton = document.getElementById("cancel");
+const sendButton = document.getElementById("send");
+const queueButton = document.getElementById("queue");
+const PLAY_SVG = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>';
+const STOP_SVG = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 6h12v12H6z"/></svg>';
+const FAST_FORWARD_SVG = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z"/></svg>';
+const RESUME_PREFIX = "[This task was interrupted for a more urgent request. Review the progress above and resume this task only if it remains appropriate; otherwise say so briefly.]\n";
+let taskRunning = false;
+let stopRequested = false;
+let taskQueue = [];
+let runningTask = null;
 const attachmentsEl = document.getElementById("attachments");
 const imageInput = document.getElementById("image-input");
 const pendingAttachments = [];
 let currentTaskId = null;
+let progressTimer = null;
+let progressIndex = 0;
+const activityLines = [];
+let latestThinking = "";
+let typingEl = null;
+let currentLabel = "";
+
+function splitThinking(content) {{
+  const text = String(content || "");
+  const match = text.match(/<think(?:ing)?>([\\s\\S]*?)<\\/think(?:ing)?>/i);
+  if (!match) return {{ thinking: "", body: text }};
+  return {{
+    thinking: match[1].trim(),
+    body: (text.slice(0, match.index) + text.slice(match.index + match[0].length)).trim()
+  }};
+}}
+
+function appendThoughts(element, thinking) {{
+  const text = String(thinking || "").trim();
+  if (!text) return;
+  const details = document.createElement("details");
+  details.className = "thoughts";
+  const summary = document.createElement("summary");
+  summary.textContent = "Thought process";
+  const body = document.createElement("div");
+  body.className = "thoughts-body";
+  body.textContent = text;
+  details.appendChild(summary);
+  details.appendChild(body);
+  element.insertBefore(details, element.firstChild);
+}}
+
+function showTyping(label) {{
+  hideTyping();
+  typingEl = document.createElement("div");
+  typingEl.className = "typing";
+  const dots = document.createElement("span");
+  dots.className = "dots";
+  for (let i = 0; i < 3; i += 1) dots.appendChild(document.createElement("span"));
+  typingEl.appendChild(dots);
+  const labelEl = document.createElement("span");
+  labelEl.className = "activity-label";
+  labelEl.textContent = label || "Working...";
+  typingEl.appendChild(labelEl);
+  const snippet = document.createElement("span");
+  snippet.className = "thought-snippet";
+  snippet.textContent = "";
+  typingEl.appendChild(snippet);
+  const feed = document.createElement("div");
+  feed.className = "activity-feed";
+  typingEl.appendChild(feed);
+  messagesEl.appendChild(typingEl);
+  typingEl.scrollIntoView({{ behavior: "smooth", block: "end" }});
+}}
+
+function updateTypingFeed() {{
+  if (!typingEl) return;
+  const label = typingEl.querySelector(".activity-label");
+  const snippet = typingEl.querySelector(".thought-snippet");
+  const feed = typingEl.querySelector(".activity-feed");
+  if (label && currentLabel) label.textContent = currentLabel;
+  if (snippet) {{
+    snippet.textContent = latestThinking ? latestThinking.split(/\\n/)[0] : "";
+    snippet.title = latestThinking || "";
+  }}
+  if (feed) {{
+    feed.replaceChildren();
+    for (const line of activityLines.slice(-4)) {{
+      const row = document.createElement("div");
+      row.textContent = line;
+      feed.appendChild(row);
+    }}
+  }}
+}}
+
+function hideTyping() {{
+  if (typingEl) typingEl.remove();
+  typingEl = null;
+}}
+
+function startProgressPolling(taskId) {{
+  stopProgressPolling();
+  progressIndex = 0;
+  progressTimer = setInterval(async () => {{
+    if (!currentTaskId) return;
+    try {{
+      const response = await fetch(
+        `/api/agent/progress?task_id=${{encodeURIComponent(taskId)}}&after=${{progressIndex}}`,
+        {{ headers }}
+      );
+      if (!response.ok) return;
+      const data = await response.json();
+      if (!data.active) {{
+        stopProgressPolling();
+        return;
+      }}
+      progressIndex = data.index || progressIndex;
+      for (const event of data.events || []) {{
+        if (event.type === "phase") currentLabel = event.text;
+        else if (event.type === "thinking") {{
+          latestThinking = event.text;
+          activityLines.push(`💭 ${{String(event.text).split(/\\n/)[0].slice(0, 90)}}`);
+        }}
+        else if (event.type === "tool") {{
+          activityLines.push(`🔧 ${{event.tool}} ${{event.detail || ""}}`);
+          currentLabel = `Running tool: ${{event.tool}}`;
+        }}
+        else if (event.type === "tool_result") {{
+          activityLines.push(`${{event.ok ? "✓" : "✗"}} ${{event.tool}} finished`);
+        }}
+      }}
+      if (currentLabel && typingEl) typingEl.querySelector(".activity-label").textContent = currentLabel;
+      updateTypingFeed();
+    }} catch (error) {{
+      /* Polling is best-effort only; never disturb the chat flow. */
+    }}
+  }}, 1000);
+}}
+
+function stopProgressPolling() {{
+  if (progressTimer) clearInterval(progressTimer);
+  progressTimer = null;
+}}
 
 function escapeHtml(value) {{
   return String(value)
@@ -1875,7 +2829,7 @@ function renderMarkdown(content) {{
   return output.join("");
 }}
 
-function addMessage(role, content, isError = false, imageUrls = []) {{
+function addMessage(role, content, isError = false, imageUrls = [], thinking = "") {{
   const element = document.createElement("div");
   element.className = `message ${{isError ? "error" : role}}`;
   element.innerHTML = renderMarkdown(content);
@@ -1885,6 +2839,7 @@ function addMessage(role, content, isError = false, imageUrls = []) {{
     image.alt = "Attached image";
     element.appendChild(image);
   }}
+  appendThoughts(element, thinking);
   messagesEl.appendChild(element);
   element.scrollIntoView({{ behavior: "smooth", block: "end" }});
 }}
@@ -1967,6 +2922,60 @@ async function loadConfig() {{
     : config.mode === "cloud"
       ? "Ollama Cloud needs setup. Run: ollama launch comet --config"
     : "Local mode: requests stay on this computer.";
+  await loadLaunchpad();
+}}
+
+async function loadLaunchpad() {{
+  const container = document.getElementById("launchpad-buttons");
+  if (!container) return;
+  try {{
+    const response = await fetch("/api/config", {{ headers }});
+    const config = await response.json();
+    renderLaunchpad(config.environments || {{}});
+  }} catch (error) {{
+    container.replaceChildren();
+  }}
+}}
+
+function renderLaunchpad(environments) {{
+  const container = document.getElementById("launchpad-buttons");
+  const removeSelect = document.getElementById("lp-remove");
+  const entries = Object.entries(environments || {{}});
+  container.replaceChildren();
+  if (removeSelect) {{
+    while (removeSelect.options.length > 1) removeSelect.remove(1);
+    for (const [name] of entries) {{
+      const option = document.createElement("option");
+      option.value = name;
+      option.textContent = name;
+      removeSelect.appendChild(option);
+    }}
+  }}
+  if (!entries.length) {{
+    const note = document.createElement("span");
+    note.className = "empty-note";
+    note.textContent = "No environments configured yet — click Manage to add one.";
+    container.appendChild(note);
+    return;
+  }}
+  for (const [name, value] of entries) {{
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "launch-env";
+    button.textContent = name;
+    button.title = `Open ${{value.url}} and sign in as ${{value.account}} with its vault credential`;
+    button.addEventListener("click", () => launchEnv(name, value));
+    container.appendChild(button);
+  }}
+}}
+
+async function launchEnv(name, value) {{
+  promptEl.value = [
+    `Launch the environment "${{name}}" for account ${{value.account}}:`,
+    `open ${{value.url}}, fill the login form with its vault credential and submit.`,
+    "I confirm the sign in for this launch."
+  ].join(" ");
+  await sendMessage();
 }}
 
 async function loadModels(preferred) {{
@@ -2008,26 +3017,59 @@ async function saveConfig() {{
   status.textContent = "Configuration saved.";
 }}
 
-async function sendMessage() {{
-  const content = promptEl.value.trim();
-  if (!content && !pendingAttachments.length) return;
-  const attachments = pendingAttachments.map(attachment => ({{
-    name: attachment.name,
-    type: attachment.type,
-    data: attachment.data
-  }}));
-  const imageUrls = pendingAttachments
-    .filter(attachment => attachment.type.startsWith("image/"))
-    .map(attachment => attachment.preview);
-  promptEl.value = "";
-  pendingAttachments.length = 0;
-  renderAttachments();
+function updateSendButton() {{
+  if (taskRunning) {{
+    sendButton.innerHTML = STOP_SVG;
+    sendButton.classList.add("executing");
+    const label = stopRequested ? "Stopping task..." : "Stop autonomous task";
+    sendButton.title = label;
+    sendButton.setAttribute("aria-label", label);
+    sendButton.disabled = stopRequested;
+  }} else {{
+    sendButton.innerHTML = PLAY_SVG;
+    sendButton.classList.remove("executing");
+    sendButton.title = "Send and run task";
+    sendButton.setAttribute("aria-label", "Send and run task");
+    sendButton.disabled = false;
+  }}
+  updateQueueButton();
+}}
+
+function updateQueueButton() {{
+  const visible = taskRunning && !stopRequested;
+  queueButton.hidden = !visible;
+  queueButton.disabled = !visible || (!promptEl.value.trim() && !pendingAttachments.length);
+}}
+
+function startTask(content, attachments, imageUrls) {{
+  taskRunning = true;
+  runningTask = {{ content }};
+  updateSendButton();
+  return runTask(content, attachments, imageUrls);
+}}
+
+function advanceQueue() {{
+  if (!taskQueue.length) {{
+    updateSendButton();
+    return;
+  }}
+  const next = taskQueue.shift();
+  renderQueue();
+  status.textContent = "Starting next queued message...";
+  startTask(next.content, next.attachments, next.imageUrls);
+}}
+
+async function runTask(content, attachments, imageUrls) {{
   messages.push({{ role: "user", content, attachments }});
   addMessage("user", content || "Attached files", false, imageUrls);
   status.textContent = "Thinking and controlling Comet...";
-  document.getElementById("send").disabled = true;
+  status.classList.add("busy");
   currentTaskId = crypto.randomUUID();
-  cancelButton.disabled = false;
+  activityLines.length = 0;
+  latestThinking = "";
+  currentLabel = "Thinking...";
+  showTyping(currentLabel);
+  startProgressPolling(currentTaskId);
   try {{
     await saveConfig();
     const response = await fetch("/api/agent", {{
@@ -2043,9 +3085,11 @@ async function sendMessage() {{
     const data = await response.json();
     window.__ollamaCometLastResult = data;
     if (!response.ok) throw new Error(data.error || "Ollama request failed");
-    const answer = data.message?.content || data.response || JSON.stringify(data, null, 2);
-    messages.push({{ role: "assistant", content: answer }});
-    addMessage("assistant", answer);
+    const answerRaw = data.message?.content || data.response || JSON.stringify(data, null, 2);
+    const split = splitThinking(answerRaw);
+    const modelThinking = data.message?.thinking || data.message?.reasoning || "";
+    messages.push({{ role: "assistant", content: answerRaw }});
+    addMessage("assistant", split.body, false, [], split.thinking || modelThinking);
     const used = (data.tool_trace || []).map(item => item.tool);
     status.textContent = used.length
       ? `Ready - browser tools used: ${{used.join(", ")}}`
@@ -2055,16 +3099,47 @@ async function sendMessage() {{
     addMessage("assistant", error.message, true);
     status.textContent = "Request failed";
   }} finally {{
-    document.getElementById("send").disabled = false;
-    cancelButton.disabled = true;
+    stopProgressPolling();
+    hideTyping();
+    status.classList.remove("busy");
+    taskRunning = false;
+    stopRequested = false;
+    runningTask = null;
     currentTaskId = null;
+    if (taskQueue.length) {{
+      advanceQueue();
+    }} else {{
+      updateSendButton();
+    }}
   }}
 }}
 
-async function cancelTask() {{
-  if (!currentTaskId) return;
-  cancelButton.disabled = true;
-  status.textContent = "Cancelling autonomous task...";
+async function sendMessage() {{
+  if (taskRunning) {{
+    requestStop();
+    return;
+  }}
+  const content = promptEl.value.trim();
+  if (!content && !pendingAttachments.length) return;
+  const attachments = pendingAttachments.map(attachment => ({{
+    name: attachment.name,
+    type: attachment.type,
+    data: attachment.data
+  }}));
+  const imageUrls = pendingAttachments
+    .filter(attachment => attachment.type.startsWith("image/"))
+    .map(attachment => attachment.preview);
+  promptEl.value = "";
+  pendingAttachments.length = 0;
+  renderAttachments();
+  startTask(content, attachments, imageUrls);
+}}
+
+async function requestStop() {{
+  if (!currentTaskId || stopRequested) return;
+  stopRequested = true;
+  updateSendButton();
+  status.textContent = "Stopping autonomous task...";
   try {{
     const response = await fetch("/api/agent/cancel", {{
       method: "POST",
@@ -2072,25 +3147,188 @@ async function cancelTask() {{
       body: JSON.stringify({{ task_id: currentTaskId }})
     }});
     const data = await response.json();
-    if (!response.ok) throw new Error(data.error || "Unable to cancel task");
+    if (!response.ok) throw new Error(data.error || "Unable to stop task");
     status.textContent = data.cancelled
-      ? "Cancellation requested..."
+      ? "Stopping autonomous task..."
       : "Task already finished.";
   }} catch (error) {{
     status.textContent = error.message;
-    cancelButton.disabled = false;
+    stopRequested = false;
+    updateSendButton();
   }}
 }}
 
+function queueMessage() {{
+  if (!taskRunning || stopRequested) return;
+  const content = promptEl.value.trim();
+  if (!content && !pendingAttachments.length) return;
+  const attachments = pendingAttachments.map(attachment => ({{
+    name: attachment.name,
+    type: attachment.type,
+    data: attachment.data
+  }}));
+  const imageUrls = pendingAttachments
+    .filter(attachment => attachment.type.startsWith("image/"))
+    .map(attachment => attachment.preview);
+  promptEl.value = "";
+  pendingAttachments.length = 0;
+  renderAttachments();
+  taskQueue.push({{ content, attachments, imageUrls, resume: false }});
+  renderQueue();
+  updateQueueButton();
+  status.textContent = `Message queued - ${{taskQueue.length}} waiting.`;
+}}
+
+function renderQueue() {{
+  const panel = document.getElementById("queue-panel");
+  const list = document.getElementById("queue-list");
+  if (!panel || !list) return;
+  list.replaceChildren();
+  panel.hidden = taskQueue.length === 0;
+  taskQueue.forEach((item, index) => {{
+    const row = document.createElement("li");
+    const text = document.createElement("span");
+    text.className = "queue-text";
+    text.textContent = item.content || "Attached files";
+    text.title = item.content || "Attached files";
+    const now = document.createElement("button");
+    now.className = "secondary icon-button queue-now";
+    now.type = "button";
+    now.title = "Send now - interrupts the running task";
+    now.setAttribute("aria-label", "Send this queued message now");
+    now.innerHTML = FAST_FORWARD_SVG;
+    now.addEventListener("click", () => sendQueuedNow(index));
+    row.append(text, now);
+    list.appendChild(row);
+  }});
+}}
+
+function sendQueuedNow(index) {{
+  if (index >= taskQueue.length) return;
+  const urgent = taskQueue.splice(index, 1)[0];
+  if (!taskRunning) {{
+    renderQueue();
+    startTask(urgent.content, urgent.attachments, urgent.imageUrls);
+    return;
+  }}
+  const queue = [urgent];
+  if (runningTask && runningTask.content) {{
+    queue.push({{
+      content: RESUME_PREFIX + runningTask.content,
+      attachments: [],
+      imageUrls: [],
+      resume: true
+    }});
+  }}
+  taskQueue = queue.concat(taskQueue);
+  renderQueue();
+  updateQueueButton();
+  requestStop();
+}}
+
+function setControlsCollapsed(collapsed) {{
+  const controls = document.getElementById("controls");
+  const toggle = document.getElementById("settings-toggle");
+  if (!controls || !toggle) return;
+  controls.classList.toggle("collapsed", collapsed);
+  toggle.setAttribute("aria-pressed", collapsed ? "true" : "false");
+  const label = collapsed ? "Show model settings" : "Hide model settings";
+  toggle.title = label;
+  toggle.setAttribute("aria-label", label);
+  try {{
+    localStorage.setItem("ollamaCometControlsCollapsed", collapsed ? "1" : "0");
+  }} catch (error) {{
+    /* localStorage may be unavailable; collapse still works for this view. */
+  }}
+}}
+
+async function saveAndCollapse() {{
+  try {{
+    await saveConfig();
+    setControlsCollapsed(true);
+    status.textContent = "Configuration saved - settings collapsed (⚙ to reopen)";
+  }} catch (error) {{
+    status.textContent = error.message;
+  }}
+}}
+
+const launchpadEditor = document.getElementById("launchpad-editor");
+document.getElementById("launchpad-manage").addEventListener("click", () => {{
+  launchpadEditor.hidden = !launchpadEditor.hidden;
+}});
+document.getElementById("lp-done").addEventListener("click", () => {{
+  launchpadEditor.hidden = true;
+  document.getElementById("lp-name").value = "";
+  document.getElementById("lp-url").value = "";
+  document.getElementById("lp-account").value = "";
+}});
+document.getElementById("lp-save").addEventListener("click", async () => {{
+  try {{
+    const name = document.getElementById("lp-name").value.trim();
+    const url = document.getElementById("lp-url").value.trim();
+    const account = document.getElementById("lp-account").value.trim();
+    if (!name) throw new Error("Environment name is required.");
+    if (!url || !account) throw new Error("Both URL and account are required.");
+    const response = await fetch("/api/config", {{ headers }});
+    const config = await response.json();
+    const environments = config.environments || {{}};
+    environments[name] = {{ url, account }};
+    const save = await fetch("/api/config", {{
+      method: "POST",
+      headers,
+      body: JSON.stringify({{ mode: provider.value, model: model.value, environments }})
+    }});
+    const data = await save.json();
+    if (!save.ok) throw new Error(data.error || "Unable to save environment");
+    document.getElementById("lp-name").value = "";
+    document.getElementById("lp-url").value = "";
+    document.getElementById("lp-account").value = "";
+    renderLaunchpad(environments);
+    status.textContent = `Environment "${{name}}" saved.`;
+  }} catch (error) {{
+    status.textContent = error.message;
+  }}
+}});
+document.getElementById("lp-remove-go").addEventListener("click", async () => {{
+  const removeName = document.getElementById("lp-remove").value;
+  if (!removeName) return;
+  try {{
+    const response = await fetch("/api/config", {{ headers }});
+    const config = await response.json();
+    const environments = config.environments || {{}};
+    delete environments[removeName];
+    const save = await fetch("/api/config", {{
+      method: "POST",
+      headers,
+      body: JSON.stringify({{ mode: provider.value, model: model.value, environments }})
+    }});
+    const data = await save.json();
+    if (!save.ok) throw new Error(data.error || "Unable to remove environment");
+    renderLaunchpad(environments);
+    status.textContent = `Environment "${{removeName}}" removed.`;
+  }} catch (error) {{
+    status.textContent = error.message;
+  }}
+}});
 document.getElementById("send").addEventListener("click", sendMessage);
-document.getElementById("save").addEventListener("click", saveConfig);
+document.getElementById("save").addEventListener("click", saveAndCollapse);
+document.getElementById("settings-toggle").addEventListener("click", () => {{
+  setControlsCollapsed(document.getElementById("controls").classList.contains("collapsed") ? false : true);
+}});
+try {{
+  if (localStorage.getItem("ollamaCometControlsCollapsed") !== "0") setControlsCollapsed(true);
+}} catch (error) {{
+  /* localStorage unavailable - keep settings collapsed for this view. */
+}}
 document.getElementById("refresh").addEventListener("click", () => loadModels(model.value));
 document.getElementById("attach").addEventListener("click", () => imageInput.click());
 imageInput.addEventListener("change", async () => {{
   await addFiles(imageInput.files);
   imageInput.value = "";
 }});
-cancelButton.addEventListener("click", cancelTask);
+document.getElementById("queue").addEventListener("click", queueMessage);
+promptEl.addEventListener("input", updateQueueButton);
+updateSendButton();
 provider.addEventListener("change", async () => {{
   const response = await fetch("/api/config", {{ headers }});
   const config = await response.json();
@@ -2261,6 +3499,22 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(200, command)
             return
 
+        if parsed.path == "/api/agent/progress":
+            if not self.authorized():
+                self.send_json(403, {"error": "Invalid launcher token"})
+                return
+            query = parse_qs(parsed.query)
+            task_id = (query.get("task_id") or [""])[0]
+            if not task_id:
+                self.send_json(400, {"error": "task_id is required"})
+                return
+            try:
+                after = max(0, int((query.get("after") or ["0"])[0]))
+            except ValueError:
+                after = 0
+            self.send_json(200, self.server.agent_tasks.progress(task_id, after))
+            return
+
         if parsed.path in {"/", "/sidecar", "/sidecar/", "/sidecar/search/new", "/embedded-sidecar/search/new"}:
             body = html_page(self.server.access_token).encode("utf-8")
             self.send_bytes(
@@ -2407,6 +3661,23 @@ class Handler(BaseHTTPRequestHandler):
                 config[f"{mode}_model"] = model
                 config["endpoint"] = config[f"{mode}_endpoint"]
                 config["model"] = model
+                if "environments" in body:
+                    raw_envs = body.get("environments") or {}
+                    if not isinstance(raw_envs, dict):
+                        raise ValueError("Environments must be an object")
+                    clean_envs = {}
+                    for env_name, env_value in raw_envs.items():
+                        label = str(env_name).strip()
+                        if not label or not isinstance(env_value, dict):
+                            continue
+                        url = str(env_value.get("url") or "").strip()
+                        account = str(env_value.get("account") or "").strip()
+                        if not url or not account:
+                            raise ValueError(
+                                f"Environment '{label}' needs both url and account."
+                            )
+                        clean_envs[label] = {"url": url, "account": account}
+                    config["environments"] = clean_envs
                 save_config(config)
                 config["cloud_configured"] = bool(self.server.api_key)
                 self.send_json(200, config)
@@ -2425,6 +3696,7 @@ class Handler(BaseHTTPRequestHandler):
                     method="POST",
                     payload=payload,
                     api_key=self.server.api_key,
+                    timeout=chat_timeout(config),
                 )
                 self.send_bytes(status, content_type, body)
             except urllib.error.HTTPError as error:

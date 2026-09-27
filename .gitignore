@@ -9,3 +9,5 @@ artifacts/
 *.token
 cloud-key.clixml
 config.json
+.agents/
+skills-lock.json

@@ -12,8 +12,36 @@ function openSettings() {
   chrome.runtime.openOptionsPage();
 }
 
-async function loadAssistant() {
+// Fallback pairing: if storage has no token yet, read the packaged
+// runtime-config.json (written by the launcher) and seed storage from it.
+async function resolveConfig() {
   const config = await chrome.storage.local.get(defaults);
+  if (config.token) return config;
+  try {
+    const response = await fetch(chrome.runtime.getURL("runtime-config.json"), {
+      cache: "no-store"
+    });
+    if (response.ok) {
+      const managed = await response.json();
+      if (managed.token) {
+        const seed = {
+          bridgeUrl: String(
+            managed.bridgeUrl || config.bridgeUrl || defaults.bridgeUrl
+          ).replace(/\/+$/, ""),
+          token: String(managed.token)
+        };
+        await chrome.storage.local.set(seed);
+        return seed;
+      }
+    }
+  } catch {
+    // runtime-config.json is optional when used without the launcher.
+  }
+  return config;
+}
+
+async function loadAssistant() {
+  const config = await resolveConfig();
   const bridgeUrl = String(config.bridgeUrl || defaults.bridgeUrl).replace(/\/+$/, "");
   const token = String(config.token || "");
   if (!token) {

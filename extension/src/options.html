@@ -9,7 +9,37 @@
 <body>
   <main>
     <h1>Connection settings</h1>
-    <p>The bridge listens only on your computer. Copy the current token from the bridge launcher output or token file.</p>
+    <p>The bridge listens only on this computer. Follow these steps to generate its token and link this extension.</p>
+    <section class="instructions">
+      <h2>Generate and link the bridge token</h2>
+      <ol class="steps">
+        <li>
+          <strong>Start the bridge — the token is generated automatically.</strong>
+          In PowerShell run <code data-fill="launch-command"></code>. The launcher writes a random
+          session token to <code>%LOCALAPPDATA%\OllamaComet\bridge.token</code> and reuses it
+          across bridge restarts.
+          <span class="step-detail" data-fill="launch-detail" hidden></span>
+        </li>
+        <li>
+          <strong>Copy the token.</strong> Open that file in Notepad and copy the single line
+          inside it. It authorizes this extension against <code>127.0.0.1:11435</code> only — it is
+          <em>not</em> your Ollama Cloud API key, and never share or commit it.
+        </li>
+        <li>
+          <strong>Paste and save.</strong> Keep <em>Bridge URL</em> as
+          <code>http://127.0.0.1:11435</code>, paste the token into <em>Bridge token</em>, then
+          select <strong>Save</strong>.
+        </li>
+        <li>
+          <strong>Verify the link.</strong> Select <strong>Test connection</strong>; it should
+          report “Connection successful.”
+        </li>
+        <li><strong>Open the assistant.</strong> <span data-fill="open-panel"></span></li>
+      </ol>
+      <p class="note" id="first-time-note" hidden></p>
+      <p class="note">Running <code data-fill="restore-command"></code> revokes the current token;
+      the next launch generates a replacement, which you then paste here again.</p>
+    </section>
     <form id="form">
       <label>
         Bridge URL

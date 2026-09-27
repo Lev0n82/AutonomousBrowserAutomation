@@ -12,7 +12,7 @@ $ErrorActionPreference = 'Stop'
 
 $sourceRoot = $PSScriptRoot
 $installRoot = Join-Path $env:LOCALAPPDATA 'AutonomousBrowserAutomation\bin'
-$requiredFiles = @('bridge.py', 'Launch-AutonomousBrowser.ps1', 'Launch-OllamaComet.ps1', 'ollama.cmd')
+$requiredFiles = @('bridge.py', 'Launch-AutonomousBrowser.ps1', 'Launch-OllamaComet.ps1', 'ollama.cmd', 'vault.py', 'ado.py', 'launchpad.py')
 $pythonPath = 'C:\Python314\python.exe'
 $runtimeRoot = Join-Path $env:LOCALAPPDATA 'OllamaComet'
 $runtimePidPath = Join-Path $runtimeRoot 'bridge.pid'
