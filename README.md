@@ -137,6 +137,7 @@ the assistant panel, and normal navigation occurs in the main browser area.
 | Microsoft Edge | Edge side panel | WebExtension APIs plus DevTools debugger input | `ollama launch edge` |
 | Mozilla Firefox | Firefox sidebar | WebExtension APIs plus semantic DOM-event fallbacks | Manual extension load |
 | Perplexity Comet | Native Comet sidecar | Signed Comet Agent `/agent` protocol | `ollama launch comet` |
+| Microsoft 365 Copilot | M365 Copilot tab plus assistant sidecar / side panel | Chromium extension via the underlying Edge or Chrome launch path | `ollama launch copilot` |
 
 Chrome and Edge share the Chromium extension package. Firefox uses a separate
 Manifest V3 package because Firefox implements sidebars and background scripts
@@ -243,6 +244,7 @@ ollama launch chrome
 ollama launch chromium
 ollama launch edge
 ollama launch comet
+ollama launch copilot
 ```
 
 Select a specific model:
@@ -268,6 +270,49 @@ through the project wrapper. In an already-open PowerShell window, refresh it:
 ```powershell
 . $PROFILE.CurrentUserAllHosts
 ```
+
+### Copilot 365
+
+`ollama launch copilot` opens Microsoft 365 Copilot in an isolated browser
+profile together with the Ollama-powered assistant, so the M365 Copilot web
+app and the local/Ollama Cloud agent are one launch away:
+
+```powershell
+ollama launch copilot
+```
+
+What happens on launch:
+
+1. The bridge starts on `127.0.0.1:11435` (shared with the other launch
+   commands).
+2. Microsoft Edge opens with a dedicated `copilot Profile` and shows
+   Microsoft 365 Copilot (`https://m365.cloud.microsoft/chat`) as the primary
+   tab.
+3. The Autonomous Browser Assistant sidecar opens in a second tab, and the
+   extension side panel is available after the one-time unpacked-extension
+   setup described below.
+4. Sign in to Microsoft 365 with your work account. The sign-in persists in
+   the isolated Copilot profile for future launches.
+
+Options:
+
+```powershell
+ollama launch copilot --model qwen3.5
+ollama launch copilot --copilot-url "https://www.microsoft365.com/chat"
+ollama launch copilot --config
+```
+
+Copilot 365 settings are stored in
+`%LOCALAPPDATA%\OllamaComet\config.json` (or set them through
+`ollama launch copilot --config`):
+
+| Key | Default | Purpose |
+|---|---|---|
+| `copilot_url` | `https://m365.cloud.microsoft/chat` | Start URL for the Copilot tab. Any URL works, for example `https://www.microsoft365.com/chat`, `https://copilot.cloud.microsoft/`, or `https://claude.ai`. |
+| `copilot_browser` | `edge` | Underlying Chromium browser: `edge`, `chrome`, or `chromium`. On machines where enterprise policy blocks unpacked extensions in branded browsers, use `chromium`. |
+
+The `-CopilotUrl` command-line parameter overrides `copilot_url` for a single
+launch.
 
 ### Connect an existing Chromium instance
 

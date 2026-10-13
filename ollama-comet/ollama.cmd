@@ -6,6 +6,7 @@ if /I "%~1"=="launch" if /I "%~2"=="chrome" goto chrome
 if /I "%~1"=="launch" if /I "%~2"=="chromium" goto chromium
 if /I "%~1"=="launch" if /I "%~2"=="edge" goto edge
 if /I "%~1"=="launch" if /I "%~2"=="firefox" goto firefox
+if /I "%~1"=="launch" if /I "%~2"=="copilot" goto copilot
 "%LOCALAPPDATA%\Programs\Ollama\ollama.exe" %*
 exit /b %ERRORLEVEL%
 
@@ -37,4 +38,10 @@ exit /b %ERRORLEVEL%
 shift
 shift
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%OLLAMA_BROWSER_SCRIPT%" -Browser firefox %1 %2 %3 %4 %5 %6 %7 %8 %9
+exit /b %ERRORLEVEL%
+
+:copilot
+shift
+shift
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%OLLAMA_BROWSER_SCRIPT%" -Browser copilot %1 %2 %3 %4 %5 %6 %7 %8 %9
 exit /b %ERRORLEVEL%

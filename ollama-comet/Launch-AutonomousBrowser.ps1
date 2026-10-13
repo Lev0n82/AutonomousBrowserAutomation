@@ -1,11 +1,14 @@
 [CmdletBinding()]
 param(
     [Parameter()]
-    [ValidateSet('chrome', 'chromium', 'edge', 'firefox', 'comet')]
+    [ValidateSet('chrome', 'chromium', 'edge', 'firefox', 'comet', 'copilot')]
     [string]$Browser = 'comet',
 
     [Parameter()]
     [string]$BrowserPath,
+
+    [Parameter()]
+    [string]$CopilotUrl,
 
     [Parameter()]
     [string]$Model,
@@ -64,6 +67,32 @@ $pythonPath = 'C:\Python314\python.exe'
 $cometPath = 'C:\Program Files\Perplexity\Comet\Application\comet.exe'
 $port = 11435
 $debugPort = 9223
+
+# Copilot 365 target: opens Microsoft 365 Copilot in an isolated Chromium
+# profile (Edge by default) with the Ollama assistant sidecar attached. It
+# reuses the branded-Chromium launch path of the underlying browser.
+$copilotDefaultUrl = 'https://m365.cloud.microsoft/chat'
+$copilotBrowserName = 'edge'
+$copilotTargetUrl = $copilotDefaultUrl
+if ($Browser -eq 'copilot' -and (Test-Path $configPath)) {
+    try {
+        $copilotConfig = Get-Content -Raw $configPath | ConvertFrom-Json
+        if ($copilotConfig.copilot_browser -in @('chrome', 'chromium', 'edge')) {
+            $copilotBrowserName = [string]$copilotConfig.copilot_browser
+        }
+        if ($copilotConfig.copilot_url) {
+            $copilotTargetUrl = [string]$copilotConfig.copilot_url
+        }
+    }
+    catch {
+        Write-Host 'The Copilot 365 configuration could not be read; using defaults.' -ForegroundColor Yellow
+    }
+}
+if ($CopilotUrl) {
+    $copilotTargetUrl = $CopilotUrl
+}
+# The Chromium browser that actually runs for the copilot target.
+$launchBrowser = if ($Browser -eq 'copilot') { $copilotBrowserName } else { $Browser }
 
 $normalizedExtraArguments = [System.Collections.Generic.List[string]]::new()
 for ($index = 0; $index -lt $ExtraArguments.Count; $index++) {
@@ -664,6 +693,12 @@ function Read-Configuration {
             $cloudModel = if ($value.mode -eq 'cloud' -and $value.model) { $value.model } else { '' }
             $value | Add-Member -NotePropertyName cloud_model -NotePropertyValue $cloudModel
         }
+        if (-not ($value.PSObject.Properties.Name -contains 'copilot_url')) {
+            $value | Add-Member -NotePropertyName copilot_url -NotePropertyValue 'https://m365.cloud.microsoft/chat'
+        }
+        if (-not ($value.PSObject.Properties.Name -contains 'copilot_browser')) {
+            $value | Add-Member -NotePropertyName copilot_browser -NotePropertyValue 'edge'
+        }
         $value.endpoint = if ($value.mode -eq 'cloud') { $value.cloud_endpoint } else { $value.local_endpoint }
         $value.model = if ($value.mode -eq 'cloud') { $value.cloud_model } else { $value.local_model }
         return $value
@@ -676,6 +711,8 @@ function Read-Configuration {
         cloud_model = ''
         endpoint = 'http://127.0.0.1:11434'
         model = 'granite4.1:3b'
+        copilot_url = 'https://m365.cloud.microsoft/chat'
+        copilot_browser = 'edge'
     }
 }
 
@@ -739,6 +776,18 @@ function Configure-Integration {
     }
     $localModel = if ($mode -eq 'local') { $selectedModel } else { $current.local_model }
     $cloudModel = if ($mode -eq 'cloud') { $selectedModel } else { $current.cloud_model }
+    $copilotConfigUrl = if ($current.PSObject.Properties.Name -contains 'copilot_url' -and $current.copilot_url) { [string]$current.copilot_url } else { 'https://m365.cloud.microsoft/chat' }
+    $copilotConfigBrowser = if ($current.PSObject.Properties.Name -contains 'copilot_browser' -and $current.copilot_browser -in @('chrome', 'chromium', 'edge')) { [string]$current.copilot_browser } else { 'edge' }
+    Write-Host ''
+    Write-Host 'Copilot 365 (ollama launch copilot)' -ForegroundColor Cyan
+    $copilotUrlInput = Read-Host "Microsoft 365 Copilot URL [$copilotConfigUrl]"
+    if (-not [string]::IsNullOrWhiteSpace($copilotUrlInput)) {
+        $copilotConfigUrl = $copilotUrlInput
+    }
+    $copilotBrowserInput = Read-Host "Browser for Copilot 365 (edge/chrome/chromium) [$copilotConfigBrowser]"
+    if (-not [string]::IsNullOrWhiteSpace($copilotBrowserInput) -and $copilotBrowserInput -in @('chrome', 'chromium', 'edge')) {
+        $copilotConfigBrowser = $copilotBrowserInput
+    }
     Save-Configuration ([pscustomobject]@{
         mode = $mode
         local_endpoint = 'http://127.0.0.1:11434'
@@ -747,6 +796,8 @@ function Configure-Integration {
         cloud_model = $cloudModel
         endpoint = $endpoint
         model = $selectedModel
+        copilot_url = $copilotConfigUrl
+        copilot_browser = $copilotConfigBrowser
     })
     Stop-Bridge
     Write-Host "Saved configuration to $configPath" -ForegroundColor Green
@@ -788,7 +839,7 @@ $resolvedBrowserPath = if ($BrowserPath) {
     (Resolve-Path $BrowserPath).Path
 }
 elseif (-not $BridgeOnly) {
-    Resolve-BrowserPath $Browser
+    Resolve-BrowserPath $launchBrowser
 }
 else {
     $null
@@ -806,7 +857,13 @@ else {
     Get-UnpackedExtensionId -Path $extensionPath
 }
 if ($Validate) {
-    Write-Host "Browser: $Browser"
+    if ($Browser -eq 'copilot') {
+        Write-Host "Browser: copilot (Microsoft 365 Copilot in $launchBrowser)"
+        Write-Host "Copilot URL: $copilotTargetUrl"
+    }
+    else {
+        Write-Host "Browser: $Browser"
+    }
     Write-Host "Executable: $(if ($resolvedBrowserPath) { $resolvedBrowserPath } else { 'not required (bridge only)' })"
     if ($Browser -ne 'comet') {
         Write-Host "Extension: $extensionPath"
@@ -815,7 +872,7 @@ if ($Validate) {
             Write-Host 'Extension install: Firefox packages this dist as an XPI and installs it through the Firefox enterprise policy when the terminal is elevated.'
         }
         else {
-            $policyStatus = Get-ExtensionPolicyStatus -Browser $Browser -ExtensionId $extensionId
+            $policyStatus = Get-ExtensionPolicyStatus -Browser $launchBrowser -ExtensionId $extensionId
             if ($policyStatus.Blocked) {
                 Write-Host "Extension policy: BLOCKED by enterprise policy (wildcard or ID blocklist). Re-run from an elevated terminal to clear it, ask IT to update policy, or use: ollama launch chromium" -ForegroundColor Yellow
             }
@@ -872,7 +929,7 @@ if ($Browser -eq 'firefox') {
     }
 }
 elseif ($Browser -ne 'comet') {
-    $policyOutcome = Ensure-ExtensionPolicy -Browser $Browser -ExtensionId $extensionId
+    $policyOutcome = Ensure-ExtensionPolicy -Browser $launchBrowser -ExtensionId $extensionId
     switch ($policyOutcome.Result) {
         'needs-elevation' {
             Write-Host 'The Autonomous Browser Assistant extension is blocked by enterprise extension policy.' -ForegroundColor Yellow
@@ -993,6 +1050,7 @@ $extensionCdpPort = switch ($Browser) {
     'chrome' { 9224 }
     'edge' { 9225 }
     'firefox' { 9226 }
+    'copilot' { 9227 }
     default { $debugPort }
 }
 if ($Browser -eq 'comet') {
@@ -1052,6 +1110,11 @@ else {
         $argumentList.Add("`"--remote-debugging-port=$extensionCdpPort`"")
     }
     $argumentList.Add('--no-first-run')
+    if ($Browser -eq 'copilot') {
+        # Microsoft 365 Copilot opens as the primary tab; the Ollama
+        # assistant sidecar opens beside it in a second tab.
+        $argumentList.Add($copilotTargetUrl)
+    }
     $argumentList.Add('--new-window')
     $argumentList.Add($assistantUrl)
     $browserArguments = $argumentList.ToArray()
@@ -1068,7 +1131,8 @@ if ($BridgeOnly) {
 }
 
 Start-Process -FilePath $resolvedBrowserPath -ArgumentList $browserArguments | Out-Null
-Write-Host "$Browser launched with Ollama model '$($configuration.model)'." -ForegroundColor Green
+$browserDisplayName = if ($Browser -eq 'copilot') { "Microsoft 365 Copilot ($launchBrowser)" } else { $Browser }
+Write-Host "$browserDisplayName launched with Ollama model '$($configuration.model)'." -ForegroundColor Green
 Write-Host "Backend: $($configuration.endpoint)"
 if ($Browser -eq 'comet') {
     Write-Host 'The native Comet assistant opens Ollama and uses the signed Comet agent.'
@@ -1113,9 +1177,13 @@ else {
             Write-Host "  $extensionPath" -ForegroundColor Cyan
             Start-Process -FilePath $resolvedBrowserPath -ArgumentList @(
                 "`"--user-data-dir=$profilePath`"",
-                $(if ($Browser -eq 'edge') { 'edge://extensions/' } else { 'chrome://extensions/' })
+                $(if ($launchBrowser -eq 'edge') { 'edge://extensions/' } else { 'chrome://extensions/' })
             ) | Out-Null
         }
     }
     Write-Host 'Pin Autonomous Browser Assistant and select its toolbar icon to open the side panel.'
+    if ($Browser -eq 'copilot') {
+        Write-Host "Microsoft 365 Copilot is open at $copilotTargetUrl. Sign in with your work account to use M365 Copilot." -ForegroundColor Cyan
+        Write-Host 'The sign-in persists in the isolated Copilot profile for future launches.'
+    }
 }
